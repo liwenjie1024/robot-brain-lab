@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+**/coverage
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+bench
+brain

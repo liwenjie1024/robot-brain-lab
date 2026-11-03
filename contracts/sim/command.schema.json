@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://robot-brain-lab.local/contracts/sim/command.schema.json",
+  "title": "SimCommand",
+  "description": "몸(시뮬레이터)에 보내는 명령. 값의 범위는 몸마다 달라 GET /scene의 limits로 알리고 시뮬레이터가 확인한다.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/VelocityCommand" },
+    { "$ref": "#/$defs/StopCommand" },
+    { "$ref": "#/$defs/PushCommand" },
+    { "$ref": "#/$defs/ResetCommand" }
+  ],
+  "$defs": {
+    "CommandId": {
+      "description": "보낸 쪽이 정하는 번호. 시뮬레이터가 받았는지(ack)·거절했는지(rejected)를 이 번호로 알린다.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "VelocityCommand": {
+      "title": "VelocityCommand",
+      "description": "걷기 속도. 몸의 운동 제어(System 0)가 균형을 잡으며 이 속도로 걷는다. 다음 명령까지 유지한다.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "velocity" },
+        "id": { "$ref": "#/$defs/CommandId" },
+        "forward": { "description": "앞(+)/뒤(-) 속도 m/s", "type": "number" },
+        "sideways": { "description": "왼쪽(+)/오른쪽(-) 속도 m/s", "type": "number" },
+        "turn": { "description": "왼쪽으로 도는(+) 각속도 rad/s", "type": "number" }
+      },
+      "required": ["type", "forward", "sideways", "turn"],
+      "additionalProperties": false
+    },
+    "StopCommand": {
+      "title": "StopCommand",
+      "description": "제자리에 선다 (속도 0).",
+      "type": "object",
+      "properties": {
+        "type": { "const": "stop" },
+        "id": { "$ref": "#/$defs/CommandId" }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    "PushCommand": {
+      "title": "PushCommand",
+      "description": "시험용: 몸통(골반)을 잠깐 민다. 넘어지지 않고 버티는지 볼 때 쓴다.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "push" },
+        "id": { "$ref": "#/$defs/CommandId" },
+        "force": {
+          "description": "세계 좌표의 힘 [x, y, z] N (x 앞, y 왼쪽, z 위)",
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "durationMs": { "description": "미는 시간 ms", "type": "integer" }
+      },
+      "required": ["type", "force", "durationMs"],
+      "additionalProperties": false
+    },
+    "ResetCommand": {
+      "title": "ResetCommand",
+      "description": "처음 자세로 되돌린다.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "reset" },
+        "id": { "$ref": "#/$defs/CommandId" }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    }
+  }
+}

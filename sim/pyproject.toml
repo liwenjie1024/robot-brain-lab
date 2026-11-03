@@ -1,0 +1,23 @@
+[project]
+name = "robot-sim"
+version = "0.1.0"
+description = "몸(시뮬레이터): MuJoCo 물리 + 운동 제어(System 0)"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "N"]
+# 한국어 문구의 전각 기호(·, →)를 다른 글자로 바꾸라는 경고는 끈다.
+ignore = ["RUF001", "RUF002", "RUF003", "PLR0913"]
+
+[tool.ruff.lint.per-file-ignores]
+# 시험은 기대 값을 숫자로 바로 쓰는 편이 읽기 쉽다.
+"tests/**" = ["PLR2004"]

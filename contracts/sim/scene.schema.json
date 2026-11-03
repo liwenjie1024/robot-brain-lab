@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://robot-brain-lab.local/contracts/sim/scene.schema.json",
+  "title": "SceneDescription",
+  "description": "GET /scene. 화면이 몸을 그리고, 명령을 보내는 쪽이 범위를 알 수 있게 한다. 메시 모양은 GET /meshes/{id}.",
+  "type": "object",
+  "properties": {
+    "robot": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "description"],
+      "additionalProperties": false
+    },
+    "movingBodies": {
+      "description": "상태 메시지 bodies의 순서",
+      "type": "array",
+      "items": { "type": "integer" }
+    },
+    "geoms": {
+      "description": "그릴 모양. body가 0이면 바닥처럼 움직이지 않는다.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Geom" }
+    },
+    "meshes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Mesh" }
+    },
+    "limits": { "$ref": "#/$defs/Limits" },
+    "rates": {
+      "type": "object",
+      "properties": {
+        "physicsHz": { "type": "number" },
+        "controlHz": { "type": "number" },
+        "stateHz": { "type": "number" }
+      },
+      "required": ["physicsHz", "controlHz", "stateHz"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["robot", "movingBodies", "geoms", "meshes", "limits", "rates"],
+  "additionalProperties": false,
+  "$defs": {
+    "Range": {
+      "type": "object",
+      "properties": { "min": { "type": "number" }, "max": { "type": "number" } },
+      "required": ["min", "max"],
+      "additionalProperties": false
+    },
+    "Limits": {
+      "title": "Limits",
+      "description": "명령 값의 범위 (걷기 정책이 배운 범위 안쪽). pushForce는 밀기 힘의 크기 N",
+      "type": "object",
+      "properties": {
+        "forward": { "$ref": "#/$defs/Range" },
+        "sideways": { "$ref": "#/$defs/Range" },
+        "turn": { "$ref": "#/$defs/Range" },
+        "pushForce": { "$ref": "#/$defs/Range" },
+        "pushDurationMs": { "$ref": "#/$defs/Range" }
+      },
+      "required": ["forward", "sideways", "turn", "pushForce", "pushDurationMs"],
+      "additionalProperties": false
+    },
+    "Geom": {
+      "title": "Geom",
+      "type": "object",
+      "properties": {
+        "body": { "description": "붙은 몸체 번호", "type": "integer" },
+        "shape": { "enum": ["plane", "sphere", "capsule", "cylinder", "box", "mesh"] },
+        "size": { "description": "MuJoCo 크기 값 (모양마다 뜻이 다르다)", "type": "array", "items": { "type": "number" } },
+        "position": { "description": "몸체 기준 [x, y, z]", "type": "array", "items": { "type": "number" } },
+        "quaternion": { "description": "몸체 기준 [w, x, y, z]", "type": "array", "items": { "type": "number" } },
+        "rgba": { "type": "array", "items": { "type": "number" } },
+        "mesh": { "description": "shape가 mesh일 때 메시 번호", "type": "integer" }
+      },
+      "required": ["body", "shape", "size", "position", "quaternion", "rgba"],
+      "additionalProperties": false
+    },
+    "Mesh": {
+      "title": "Mesh",
+      "description": "GET /meshes/{id}: [꼭짓점 수 u32, 삼각형 수 u32, 꼭짓점 xyz f32..., 삼각형 꼭짓점 번호 u32...] (little endian)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "name": { "type": "string" },
+        "vertexCount": { "type": "integer" },
+        "faceCount": { "type": "integer" }
+      },
+      "required": ["id", "name", "vertexCount", "faceCount"],
+      "additionalProperties": false
+    }
+  }
+}

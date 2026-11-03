@@ -1,0 +1,17 @@
+# 개발용: 몸(시뮬레이터)을 Docker로 띄운다. 화면(bench)과 두뇌(brain)는 이 PC에서 돌린다.
+#   docker compose up -d --build sim        띄우기 (http://localhost:8765)
+#   docker compose run --rm sim pytest      시험
+name: robot-brain-lab
+
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: sim/Dockerfile
+    ports:
+      - "${SIM_PORT:-8765}:8765"
+    # 고친 코드를 이미지를 다시 만들지 않고 바로 쓰도록 소스와 내려받은 몸 파일을 붙인다.
+    volumes:
+      - ./sim:/app
+      - ./contracts:/contracts:ro
+    restart: unless-stopped

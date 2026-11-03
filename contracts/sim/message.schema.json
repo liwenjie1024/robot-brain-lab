@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://robot-brain-lab.local/contracts/sim/message.schema.json",
+  "title": "SimMessage",
+  "description": "몸(시뮬레이터)이 WebSocket으로 보내는 메시지.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/StateMessage" },
+    { "$ref": "#/$defs/AckMessage" },
+    { "$ref": "#/$defs/RejectedMessage" }
+  ],
+  "$defs": {
+    "Vector3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "Velocity": {
+      "title": "Velocity",
+      "type": "object",
+      "properties": {
+        "forward": { "description": "앞(+)/뒤(-) m/s", "type": "number" },
+        "sideways": { "description": "왼쪽(+)/오른쪽(-) m/s", "type": "number" },
+        "turn": { "description": "왼쪽으로 도는(+) rad/s", "type": "number" }
+      },
+      "required": ["forward", "sideways", "turn"],
+      "additionalProperties": false
+    },
+    "Posture": {
+      "title": "Posture",
+      "description": "standing: 서 있음, fallen: 넘어짐 (골반이 낮거나 많이 기욺)",
+      "enum": ["standing", "fallen"]
+    },
+    "RobotStatus": {
+      "title": "RobotStatus",
+      "description": "position: 골반 위치 [x, y, z] m (x 앞, y 왼쪽, z 위), velocity: 몸 기준 실제 속도, command: 지금 따르는 걷기 명령",
+      "type": "object",
+      "properties": {
+        "position": { "$ref": "#/$defs/Vector3" },
+        "yaw": { "description": "바라보는 방향 rad (x축에서 왼쪽으로 돈 각)", "type": "number" },
+        "velocity": { "$ref": "#/$defs/Velocity" },
+        "command": { "$ref": "#/$defs/Velocity" },
+        "posture": { "$ref": "#/$defs/Posture" },
+        "pushing": { "description": "시험용 밀기가 지금 걸려 있는지", "type": "boolean" }
+      },
+      "required": ["position", "yaw", "velocity", "command", "posture", "pushing"],
+      "additionalProperties": false
+    },
+    "StateMessage": {
+      "title": "StateMessage",
+      "description": "제어 주기마다 보내는 지금 상태.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "state" },
+        "seq": { "description": "보낸 순서 (처음으로 되돌려도 계속 는다)", "type": "integer" },
+        "simTime": { "description": "처음 자세 뒤 지난 시뮬레이션 시각 s", "type": "number" },
+        "bodies": {
+          "description": "움직이는 몸체마다 [x, y, z, qw, qx, qy, qz] 7개씩 (순서는 GET /scene의 movingBodies)",
+          "type": "array",
+          "items": { "type": "number" }
+        },
+        "robot": { "$ref": "#/$defs/RobotStatus" }
+      },
+      "required": ["type", "seq", "simTime", "bodies", "robot"],
+      "additionalProperties": false
+    },
+    "AckMessage": {
+      "title": "AckMessage",
+      "description": "명령을 받아 적용했다.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "ack" },
+        "id": { "type": "string" },
+        "commandType": { "type": "string" },
+        "simTime": { "description": "적용한 시뮬레이션 시각 s", "type": "number" }
+      },
+      "required": ["type", "commandType", "simTime"],
+      "additionalProperties": false
+    },
+    "RejectedMessage": {
+      "title": "RejectedMessage",
+      "description": "명령을 거절했다. reason은 사람이 읽는 까닭.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "rejected" },
+        "id": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["type", "reason"],
+      "additionalProperties": false
+    }
+  }
+}
