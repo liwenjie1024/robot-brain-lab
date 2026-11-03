@@ -36,6 +36,10 @@ Invoke-Step '화면: 코드 규칙 (ESLint)' (Join-Path $Root 'bench') { npx esl
 Invoke-Step '화면: 형식 검사 (TypeScript)' (Join-Path $Root 'bench') { npx vue-tsc --noEmit }
 Invoke-Step '화면: 시험 (Vitest)' (Join-Path $Root 'bench') { npx vitest run }
 Invoke-Step '화면: 빌드' (Join-Path $Root 'bench') { npx vite build }
+Invoke-Step '공용: 형식·시험' (Join-Path $Root 'shared') { npx tsc --noEmit; if ($LASTEXITCODE -eq 0) { npx vitest run } }
+Invoke-Step '두뇌: 코드 규칙·형식·시험' (Join-Path $Root 'brain') {
+    npx eslint .; if ($LASTEXITCODE -eq 0) { npx tsc --noEmit }; if ($LASTEXITCODE -eq 0) { npx vitest run }
+}
 
 Write-Host ''
 $Results | Format-Table -AutoSize | Out-String | Write-Host

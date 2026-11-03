@@ -1,5 +1,6 @@
-import type { MechaStatus, StateMessage, UnitStatus } from '@/sim/generated/message'
-import type { Limits } from '@/sim/generated/scene'
+import type { BrainStatus } from '../brain/generated/status'
+import type { MechaStatus, StateMessage, UnitStatus } from '../sim/generated/message'
+import type { Limits } from '../sim/generated/scene'
 
 /** 시험에서 함께 쓰는 값. 몸이 실제로 알리는 값과 같게 둔다 (sim/robot_sim/limits.py). */
 export const LIMITS: Limits = {
@@ -59,6 +60,21 @@ export function stateMessage(overrides: Partial<StateMessage> = {}): StateMessag
     mecha: mechaStatus(),
     units: [drone()],
     threats: [],
+    ...overrides,
+  }
+}
+
+export function brainStatus(overrides: Partial<BrainStatus> = {}): BrainStatus {
+  return {
+    type: 'brainStatus',
+    simConnected: true,
+    autonomy: false,
+    simTime: 12.3,
+    skill: { name: 'engage', target: null, evasion: 'dodge' },
+    activity: '표적 드론 1 겨누는 중 (170 m, 어긋남 0.8°)',
+    target: 'drone-1',
+    reflex: null,
+    metrics: { tickMicrosAvg: 15, tickMicrosMax: 80, commandsPerSecond: 3, lastReactionMs: 17, shots: 4, hits: 3, kills: 1, damageTaken: 40 },
     ...overrides,
   }
 }

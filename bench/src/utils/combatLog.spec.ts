@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ShotMessage } from '@/sim/generated/message'
-import { NAMES } from '@/test/fixtures'
+import type { ShotMessage } from '@shared/sim/generated/message'
+import { NAMES } from '@shared/test/fixtures'
 import { describeCombatEvent } from './combatLog'
 
 function shot(overrides: Partial<ShotMessage>): ShotMessage {

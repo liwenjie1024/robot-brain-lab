@@ -3,8 +3,8 @@ import { NButton, NCheckbox, NResult, NSpin } from 'naive-ui'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RobotSceneHandle } from '@/scene/robotScene'
 import { parseMesh } from '@/sim/meshes'
-import type { SceneDescription } from '@/sim/generated/scene'
-import type { SimClient } from '@/sim/simClient'
+import type { SceneDescription } from '@shared/sim/generated/scene'
+import type { SimClient } from '@shared/sim/simClient'
 import { supportsWebGl } from '@/utils/webgl'
 
 /** 몸의 3D 모습. 상태는 화면 표시 간격과 상관없이 받는 대로 바로 옮긴다. */

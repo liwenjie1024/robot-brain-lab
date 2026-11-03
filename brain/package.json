@@ -1,0 +1,29 @@
+{
+  "name": "@robot-brain-lab/brain",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "두뇌: 빠른 뇌(System 1). 몸의 상태를 보고 기술(자리 지키기·교전·물러나기)과 반사(피하기·막기)로 명령한다",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@robot-brain-lab/shared": "0.1.0",
+    "ajv": "8.20.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "@vue/eslint-config-typescript": "14.9.0",
+    "eslint": "10.13.0",
+    "eslint-plugin-vue": "10.11.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}

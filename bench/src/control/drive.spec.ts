@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LIMITS } from '@/test/fixtures'
+import { LIMITS } from '@shared/test/fixtures'
 import { DEFAULT_SPEEDS, keyboardAction, pushForce, velocityFor } from './drive'
 
 function keyEvent(code: string, extra: Partial<KeyboardEvent> = {}, target: EventTarget | null = document.body) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NButton, NCard, NEmpty, NProgress, NSpace, NTag } from 'naive-ui'
 import { computed } from 'vue'
-import type { StateMessage } from '@/sim/generated/message'
+import type { StateMessage } from '@shared/sim/generated/message'
 import { distance, formatMeters, formatSeconds } from '@/utils/labels'
 
 /** 이 장면의 드론과 무장: 겨누기, 방패로 막기, 쏘기 */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NAlert, NCard, NDescriptions, NDescriptionsItem, NEmpty, NProgress, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
-import type { StateMessage } from '@/sim/generated/message'
+import type { StateMessage } from '@shared/sim/generated/message'
 import { formatDegrees, formatMeters, formatSeconds, formatSpeed, MODE_LABELS } from '@/utils/labels'
 
 /** 기체 상태: 비행 모드, 체력·에너지, 소총·방패, 위협 경고, 명령한 속도와 실제 속도 */

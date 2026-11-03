@@ -1,5 +1,5 @@
-import type { MechaMode } from '@/sim/generated/message'
-import type { ConnectionPhase } from '@/sim/simClient'
+import type { MechaMode } from '@shared/sim/generated/message'
+import type { ConnectionPhase } from '@shared/sim/simClient'
 
 /** 상태는 색과 글자를 함께 보여 준다 (색만으로 나누지 않는다). */
 export type TagType = 'success' | 'warning' | 'error' | 'info' | 'default'

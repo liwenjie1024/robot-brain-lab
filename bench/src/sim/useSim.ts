@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, readonly, ref, shallowRef } from 'vue'
-import type { StateMessage } from './generated/message'
-import type { SceneDescription } from './generated/scene'
-import type { CombatEvent, CommandResult, ConnectionPhase, OutgoingCommand, SimClient } from './simClient'
+import type { StateMessage } from '@shared/sim/generated/message'
+import type { SceneDescription } from '@shared/sim/generated/scene'
+import type { CombatEvent, CommandResult, ConnectionPhase, OutgoingCommand, SimClient } from '@shared/sim/simClient'
 
 export interface CommandLogEntry {
   label: string

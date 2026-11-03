@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { stateMessage } from '@/test/fixtures'
+import { stateMessage } from '../test/fixtures'
 import type { ShotMessage, StateMessage } from './generated/message'
 import type { SceneDescription } from './generated/scene'
 import { type CombatEvent, type ConnectionPhase, SimClient } from './simClient'

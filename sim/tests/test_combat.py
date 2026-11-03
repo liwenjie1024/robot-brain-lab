@@ -137,6 +137,47 @@ def test_armed_drone_warns_before_firing(simulation):
     assert fired_at - warned_at >= DRONE_LOCK_S - 0.05
 
 
+def wait_for_threat(simulation) -> dict:
+    simulation.drain_events()
+    ticks_until(simulation, lambda: bool(simulation.threats()), 6.0)
+    simulation.drain_events()
+    return simulation.threats()[0]
+
+
+def shots_from(simulation, shooter: str, seconds: float) -> list[dict]:
+    shots = []
+    for _ in range(round(seconds / simulation.control_dt)):
+        simulation.step_control_tick()
+        shots.extend(e for e in simulation.drain_events() if e["type"] == "shot" and e["shooter"] == shooter)
+    return shots
+
+
+def test_locked_shot_hits_mecha_on_steady_course(simulation):
+    """같은 속도로 날면 드론이 조준할 때 셈한 자리에 기체가 있어 맞는다"""
+    simulation.apply(Reset("skirmish"))
+    take_off(simulation)
+    run_for(simulation, 1.0, FlightCommand(0.0, 8.0, 0.0, 0.0))
+
+    threat = wait_for_threat(simulation)
+    shots = shots_from(simulation, threat["from"], DRONE_LOCK_S + 0.2)
+
+    assert len(shots) == 1
+    assert shots[0]["hit"]["unit"] == "mecha"
+
+
+def test_dodging_after_warning_makes_locked_shot_miss(simulation):
+    """경고를 보고 옆으로 피하면(속도를 바꾸면) 조준을 시작할 때 셈한 자리를 쏘아 빗나간다"""
+    simulation.apply(Reset("skirmish"))
+    take_off(simulation)
+
+    threat = wait_for_threat(simulation)
+    simulation.apply(Fly(FlightCommand(0.0, 20.0, 0.0, 0.0)))
+    shots = shots_from(simulation, threat["from"], DRONE_LOCK_S + 0.2)
+
+    assert len(shots) == 1
+    assert "hit" not in shots[0]
+
+
 def test_unguarded_mecha_takes_damage(simulation):
     simulation.apply(Reset("skirmish"))
     take_off(simulation)

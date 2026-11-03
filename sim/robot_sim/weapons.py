@@ -2,6 +2,9 @@
 
 사격은 총구에서 실제 총열 방향으로 광선을 쏘아 처음 닿는 것을 맞힌다. 겨눈 방향이 아니라 팔이 실제로 가리키는
 방향이라, 팔이 덜 돌아갔거나 기체가 흔들리면 빗나간다 (두뇌가 조준을 기다려야 하는 까닭).
+
+드론은 조준을 시작할 때 기체의 위치·속도로 쏠 때의 자리를 미리 셈해 그곳을 쏜다 (조준 고정). 그래서 경고를 보고
+속도를 바꾸면(옆으로 피하기) 빗나가고, 같은 속도로 날면 맞는다. 피하기와 방패가 두뇌의 반사 신경 시험이 된다.
 """
 
 from __future__ import annotations
@@ -11,9 +14,9 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from .combat import DestroyedEvent, Event, Hit, ShotEvent, Units, cast, ray_groups
+from .combat import DestroyedEvent, Event, Hit, ShotEvent, Unit, Units, cast, ray_groups
 from .drones import DRONE_RADIUS_M
-from .mecha import DRONE_GROUP, MECHA_GROUP, MUZZLE_SITE, WORLD_GROUP
+from .mecha import DRONE_GROUP, MECHA_GROUP, MUZZLE_SITE, ROOT_BODY, WORLD_GROUP
 
 RIFLE_RANGE_M = 1500.0
 RIFLE_DAMAGE = 30.0
@@ -92,6 +95,8 @@ class Rifle:
 @dataclass
 class _Lock:
     started: float
+    # 쏠 때 기체가 있을 것으로 셈한 자리 (조준을 시작할 때의 위치 + 속도 × 조준 시간)
+    predicted: np.ndarray
 
 
 class DroneGunner:
@@ -100,6 +105,8 @@ class DroneGunner:
     def __init__(self, model: mujoco.MjModel) -> None:
         self._model = model
         self._groups = ray_groups(WORLD_GROUP, MECHA_GROUP)
+        mecha_joint = model.body_jntadr[model.body(ROOT_BODY).id]
+        self._mecha_dof = model.jnt_dofadr[mecha_joint]
         self._locks: dict[str, _Lock] = {}
         self._ready_at: dict[str, float] = {}
         self._rng = np.random.default_rng(DRONE_RNG_SEED)
@@ -128,12 +135,12 @@ class DroneGunner:
             lock = self._locks.get(drone.id)
             if lock is None:
                 if now >= self._ready_at.get(drone.id, index * DRONE_STAGGER_S):
-                    self._locks[drone.id] = _Lock(now)
+                    self._locks[drone.id] = _Lock(now, self._predict_mecha(data, units))
                 continue
             if now - lock.started >= DRONE_LOCK_S:
                 del self._locks[drone.id]
                 self._ready_at[drone.id] = now + DRONE_COOLDOWN_S
-                events.extend(self._fire(data, units, drone.id, drone.body, now))
+                events.extend(self._fire(data, units, drone, lock, now))
         return events
 
     def _sees_mecha(self, data: mujoco.MjData, units: Units, drone_body: int) -> bool:
@@ -143,6 +150,10 @@ class DroneGunner:
         _, geom = cast(self._model, data, start, toward, groups=self._groups, max_range=DRONE_RANGE_M)
         return geom is not None and units.of_geom(geom) is units.mecha
 
+    def _predict_mecha(self, data: mujoco.MjData, units: Units) -> np.ndarray:
+        velocity = data.qvel[self._mecha_dof : self._mecha_dof + 3]
+        return data.xpos[units.mecha.body] + velocity * DRONE_LOCK_S
+
     def _aim_line(self, data: mujoco.MjData, units: Units, drone_body: int) -> tuple[np.ndarray, np.ndarray]:
         center = data.xpos[drone_body]
         target = data.xpos[units.mecha.body]
@@ -151,9 +162,11 @@ class DroneGunner:
         start = center + toward / np.linalg.norm(toward) * DRONE_RADIUS_M
         return start, target - start
 
-    def _fire(self, data: mujoco.MjData, units: Units, drone: str, drone_body: int, now: float) -> list[Event]:
-        start, toward = self._aim_line(data, units, drone_body)
-        aim = start + toward + self._rng.normal(0.0, DRONE_SPREAD_M, 3)
+    def _fire(self, data: mujoco.MjData, units: Units, drone: Unit, lock: _Lock, now: float) -> list[Event]:
+        center = data.xpos[drone.body]
+        toward = lock.predicted - center
+        start = center + toward / np.linalg.norm(toward) * DRONE_RADIUS_M
+        aim = lock.predicted + self._rng.normal(0.0, DRONE_SPREAD_M, 3)
         end, geom = cast(self._model, data, start, aim - start, groups=self._groups, max_range=DRONE_RANGE_M)
         hit_unit = units.of_geom(geom) if geom is not None else None
         events: list[Event] = []
@@ -164,7 +177,7 @@ class DroneGunner:
             hit = Hit(units.mecha.id, damage, blocked)
             if damage and units.damage(units.mecha, damage):
                 events.append(DestroyedEvent(units.mecha.id, now))
-        events.insert(0, ShotEvent(drone, _tuple(start), _tuple(end), hit, now))
+        events.insert(0, ShotEvent(drone.id, _tuple(start), _tuple(end), hit, now))
         return events
 
 

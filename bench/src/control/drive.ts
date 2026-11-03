@@ -1,4 +1,4 @@
-import type { Limits, Range } from '@/sim/generated/scene'
+import type { Limits, Range } from '@shared/sim/generated/scene'
 
 /** 사람이 버튼·키보드로 기체를 날리는 방법. 두뇌 없이 몸과 비행 제어만 시험하거나, 두뇌를 거들 때 쓴다. */
 

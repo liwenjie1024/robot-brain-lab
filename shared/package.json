@@ -1,0 +1,21 @@
+{
+  "name": "@robot-brain-lab/shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "화면(bench)과 두뇌(brain)가 함께 쓰는 것: 몸(시뮬레이터) 연결, 규약에서 만든 타입, 시험용 값",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "contracts": "node scripts/generate-contract-types.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "json-schema-to-typescript": "16.0.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}

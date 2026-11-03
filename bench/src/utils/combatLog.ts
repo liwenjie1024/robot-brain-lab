@@ -1,4 +1,4 @@
-import type { CombatEvent } from '@/sim/simClient'
+import type { CombatEvent } from '@shared/sim/simClient'
 import type { TagType } from './labels'
 
 /** 사격·격파 사건을 사람이 읽는 한 줄로 바꾼다. names는 유닛 번호 → 이름 (모르면 번호 그대로). */

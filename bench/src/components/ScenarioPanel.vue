@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NButton, NCard, NSelect } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
-import type { ScenarioInfo } from '@/sim/generated/scene'
+import type { ScenarioInfo } from '@shared/sim/generated/scene'
 
 /** 시험 장면 고르기와 처음으로 되돌리기 */
 const props = defineProps<{

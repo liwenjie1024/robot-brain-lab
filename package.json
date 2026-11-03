@@ -1,0 +1,14 @@
+{
+  "name": "robot-brain-lab",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "bench",
+    "brain"
+  ],
+  "scripts": {
+    "contracts": "npm run contracts -w shared",
+    "brain": "npm run start -w brain",
+    "bench": "npm run dev -w bench"
+  }
+}

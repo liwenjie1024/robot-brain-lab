@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { drone, LIMITS, mechaStatus, NAMES, stateMessage } from '@/test/fixtures'
+import { drone, LIMITS, mechaStatus, NAMES, stateMessage } from '@shared/test/fixtures'
 import CombatLog from './CombatLog.vue'
 import CommandLog from './CommandLog.vue'
 import FlightPanel from './FlightPanel.vue'

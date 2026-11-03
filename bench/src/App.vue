@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { dateKoKR, koKR, NAlert, NButton, NConfigProvider, NMessageProvider, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
+import { BrainClient, brainSocketUrl } from '@/brain/brainClient'
+import { useBrain } from '@/brain/useBrain'
+import BrainPanel from '@/components/BrainPanel.vue'
 import CombatLog from '@/components/CombatLog.vue'
 import CommandLog from '@/components/CommandLog.vue'
 import FlightPanel from '@/components/FlightPanel.vue'
@@ -9,21 +12,29 @@ import RobotView from '@/components/RobotView.vue'
 import ScenarioPanel from '@/components/ScenarioPanel.vue'
 import UnitsPanel from '@/components/UnitsPanel.vue'
 import type { FlightVelocity } from '@/control/drive'
-import type { ScenarioName } from '@/sim/generated/command'
-import { SimClient } from '@/sim/simClient'
+import type { ScenarioName } from '@shared/sim/generated/command'
+import { SimClient } from '@shared/sim/simClient'
 import { useSim } from '@/sim/useSim'
 import { PHASE_LABELS } from '@/utils/labels'
 
 const SIM_BASE_URL = '/sim'
+const BRAIN_PATH = '/brain'
 
 const client = new SimClient({ baseUrl: SIM_BASE_URL })
 const sim = useSim(client)
 // 기록 목록은 컴포넌트 이름(CombatLog·CommandLog)과 겹치지 않게 부른다 (템플릿이 같은 이름의 값을 먼저 쓴다).
 const { phase, phaseDetail, scene, state, log: commandEntries, combatLog: combatEntries } = sim
 
+const brain = useBrain(new BrainClient({ url: brainSocketUrl(BRAIN_PATH) }))
+
 const phaseLabel = computed(() => PHASE_LABELS[phase.value])
 const disabledReason = computed(() =>
   phase.value === 'open' ? null : '몸(시뮬레이터)과 연결되어야 명령을 보낼 수 있습니다.',
+)
+/** 사람이 직접 조종할 수 없는 까닭 (몸과 끊김, 또는 두뇌가 조종 중) */
+const manualDisabledReason = computed(() =>
+  disabledReason.value ??
+  (brain.driving.value ? '두뇌가 조종하고 있습니다. 직접 조종하려면 두뇌 칸의 "두뇌에게 조종 맡기기"를 끄세요.' : null),
 )
 const names = computed(() => new Map((scene.value?.units ?? []).map((unit) => [unit.id, unit.name])))
 const nameOf = (id: string) => names.value.get(id) ?? id
@@ -55,7 +66,7 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
           <div>
             <h1>로봇 두뇌 시험장</h1>
             <p class="subtitle">
-              2단계: 날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }} — 사람이 비행·사격 명령을 직접 보냅니다
+              2단계: 날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }}와 빠른 뇌(System 1) — 사람이 기술을 고르면 두뇌가 날고 쏘고 피합니다
             </p>
           </div>
           <n-tooltip>
@@ -79,11 +90,14 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
           </section>
           <aside class="side">
             <mecha-panel :state="state" :names="names" :stale="phase !== 'open'" />
-            <units-panel :state="state" :disabled-reason="disabledReason" @aim="aim" @guard="guard" @fire="fire"
+            <brain-panel :phase="brain.phase.value" :status="brain.status.value" :decisions="brain.decisions.value"
+                         :last-error="brain.lastError.value" :units="state?.units ?? []" @set-autonomy="brain.setAutonomy"
+                         @set-skill="brain.setSkill" @retry="brain.retry" />
+            <units-panel :state="state" :disabled-reason="manualDisabledReason" @aim="aim" @guard="guard" @fire="fire"
                          @lower-aim="lowerAim" @lower-guard="lowerGuard" />
             <scenario-panel :scenarios="scene.scenarios" :current="state?.scenario ?? null"
                             :disabled-reason="disabledReason" @reset="reset" />
-            <flight-panel :limits="scene.limits" :heading="state?.mecha.heading ?? 0" :disabled-reason="disabledReason"
+            <flight-panel :limits="scene.limits" :heading="state?.mecha.heading ?? 0" :disabled-reason="manualDisabledReason"
                           :destroyed="state?.mecha.mode === 'destroyed'" @fly="fly" @push="push" @fire="fire" />
             <combat-log :entries="combatEntries" :names="names" />
             <command-log :entries="commandEntries" />

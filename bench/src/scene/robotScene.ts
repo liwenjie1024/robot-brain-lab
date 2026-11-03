@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { MeshData } from '@/sim/meshes'
-import type { ShotMessage, StateMessage } from '@/sim/generated/message'
-import type { Geom, SceneDescription } from '@/sim/generated/scene'
+import type { ShotMessage, StateMessage } from '@shared/sim/generated/message'
+import type { Geom, SceneDescription } from '@shared/sim/generated/scene'
 
 /**
  * 시험장을 3D로 그린다. 모양은 /scene의 설명만으로 만들어 기체가 바뀌어도 이 코드는 그대로다.

@@ -14,7 +14,7 @@ import {
   pushForce,
   velocityFor,
 } from '@/control/drive'
-import type { Limits } from '@/sim/generated/scene'
+import type { Limits } from '@shared/sim/generated/scene'
 
 /** 사람이 기체를 직접 날려 보는 칸 (두뇌 없이 몸과 비행 제어를 시험하거나 두뇌를 거들 때) */
 const props = defineProps<{
