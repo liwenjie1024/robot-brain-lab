@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { StateMessage } from './generated/message'
+import { stateMessage } from '@/test/fixtures'
+import type { ShotMessage, StateMessage } from './generated/message'
 import type { SceneDescription } from './generated/scene'
-import { type ConnectionPhase, SimClient } from './simClient'
+import { type CombatEvent, type ConnectionPhase, SimClient } from './simClient'
 
 class FakeSocket {
   static instances: FakeSocket[] = []
@@ -38,22 +39,9 @@ class FakeSocket {
   }
 }
 
-const SCENE = { robot: { name: 'G1', description: '' }, movingBodies: [1], geoms: [], meshes: [] } as unknown as SceneDescription
+const SCENE = { robot: { name: 'BL-01', description: '', height: 16 }, movingBodies: [1], geoms: [] } as unknown as SceneDescription
 
-const STATE: StateMessage = {
-  type: 'state',
-  seq: 1,
-  simTime: 0.02,
-  bodies: [0, 0, 0.78, 1, 0, 0, 0],
-  robot: {
-    position: [0, 0, 0.78],
-    yaw: 0,
-    velocity: { forward: 0, sideways: 0, turn: 0 },
-    command: { forward: 0, sideways: 0, turn: 0 },
-    posture: 'standing',
-    pushing: false,
-  },
-}
+const STATE: StateMessage = stateMessage()
 
 let clock = 0
 let phases: ConnectionPhase[] = []
@@ -153,7 +141,8 @@ describe('SimClient 상태', () => {
   it.each([
     ['JSON이 아님', '{상태'],
     ['필드가 빠짐', { type: 'state', seq: 1 }],
-    ['모르는 자세', { ...STATE, robot: { ...STATE.robot, posture: 'flying' } }],
+    ['모르는 비행 모드', { ...STATE, mecha: { ...STATE.mecha, mode: 'hovering' } }],
+    ['사격에 시작점이 없음', { type: 'shot', simTime: 1, shooter: 'mecha', to: [0, 0, 0] }],
     ['모르는 종류', { type: 'hello' }],
   ])('경계에서 규약과 다른 메시지(%s)는 버리고 센다', async (_, message) => {
     const { client, socket } = await connected()
@@ -169,23 +158,45 @@ describe('SimClient 상태', () => {
   })
 })
 
+describe('SimClient 전투 사건', () => {
+  it('사격·격파 사건은 빠짐없이 받은 순서대로 알린다', async () => {
+    const { client, socket } = await connected()
+    const events: CombatEvent[] = []
+    client.on('combat', (event) => events.push(event))
+    const shot: ShotMessage = {
+      type: 'shot',
+      simTime: 3.2,
+      shooter: 'mecha',
+      from: [0, 0, 30],
+      to: [150, 0, 25],
+      hit: { unit: 'drone-1', damage: 30, blocked: false },
+    }
+
+    socket.receive(shot)
+    socket.receive({ type: 'destroyed', simTime: 3.2, unit: 'drone-1' })
+
+    expect(events.map((event) => event.type)).toEqual(['shot', 'destroyed'])
+    expect(events[0]).toEqual(shot)
+  })
+})
+
 describe('SimClient 명령', () => {
   it('명령에 번호를 붙여 보내고, 받았다는 답이 오면 걸린 시간과 함께 끝난다', async () => {
     const { client, socket } = await connected()
 
-    const result = client.send({ type: 'velocity', forward: 0.5, sideways: 0, turn: 0 })
+    const result = client.send({ type: 'velocity', forward: 20, sideways: 0, up: 0, turn: 0 })
     const sent = socket.lastSent()
     clock = 23
     socket.receive({ type: 'ack', id: sent.id, commandType: 'velocity', simTime: 1.2 })
 
-    expect(sent).toMatchObject({ type: 'velocity', forward: 0.5, id: expect.stringMatching(/^bench-/) })
+    expect(sent).toMatchObject({ type: 'velocity', forward: 20, id: expect.stringMatching(/^bench-/) })
     await expect(result).resolves.toEqual({ id: sent.id, accepted: true, reason: undefined, roundTripMs: 23 })
   })
 
   it('거절되면 까닭을 돌려준다', async () => {
     const { client, socket } = await connected()
 
-    const result = client.send({ type: 'velocity', forward: 9, sideways: 0, turn: 0 })
+    const result = client.send({ type: 'velocity', forward: 90, sideways: 0, up: 0, turn: 0 })
     socket.receive({ type: 'rejected', id: socket.lastSent().id, reason: '앞뒤 속도 9이(가) 범위를 벗어났습니다' })
 
     await expect(result).resolves.toMatchObject({ accepted: false, reason: '앞뒤 속도 9이(가) 범위를 벗어났습니다' })

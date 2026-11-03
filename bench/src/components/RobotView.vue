@@ -18,6 +18,7 @@ const failure = ref('')
 const follow = ref(true)
 let handle: RobotSceneHandle | null = null
 let stopState: (() => void) | null = null
+let stopCombat: (() => void) | null = null
 
 async function loadMesh(meshId: number) {
   const response = await fetch(props.client.meshUrl(meshId))
@@ -41,6 +42,11 @@ async function build() {
     handle = await createRobotScene(canvas.value!, props.scene, { loadMesh, reducedMotion })
     handle.setFollow(follow.value)
     stopState = props.client.on('state', (state) => handle?.update(state))
+    stopCombat = props.client.on('combat', (event) => {
+      if (event.type === 'shot') {
+        handle?.showShot(event)
+      }
+    })
     phase.value = 'ready'
   } catch (error) {
     teardown()
@@ -52,6 +58,8 @@ async function build() {
 function teardown() {
   stopState?.()
   stopState = null
+  stopCombat?.()
+  stopCombat = null
   handle?.dispose()
   handle = null
 }
@@ -68,7 +76,7 @@ onBeforeUnmount(teardown)
             aria-label="시험장 3D 화면. 마우스로 끌면 돌려 보고, 휠로 가까이·멀리 봅니다." />
     <div v-if="phase === 'loading'" class="overlay">
       <n-spin size="large" />
-      <p>몸 모양을 불러오는 중입니다…</p>
+      <p>시험장 모양을 불러오는 중입니다…</p>
     </div>
     <n-result v-else-if="phase === 'failed'" class="overlay" status="error" title="3D 화면을 만들지 못했습니다"
               :description="failure">
@@ -79,7 +87,7 @@ onBeforeUnmount(teardown)
     <n-result v-else-if="phase === 'no-webgl'" class="overlay" status="warning" title="이 브라우저는 3D를 그릴 수 없습니다"
               description="WebGL을 쓸 수 없어 3D 모습은 보이지 않습니다. 오른쪽의 상태와 명령은 그대로 쓸 수 있습니다." />
     <div v-if="phase === 'ready'" class="view-tools">
-      <n-checkbox v-model:checked="follow">로봇 따라가기</n-checkbox>
+      <n-checkbox v-model:checked="follow">기체 따라가기</n-checkbox>
       <span class="hint">끌어서 돌려 보기 · 휠로 확대</span>
     </div>
   </div>

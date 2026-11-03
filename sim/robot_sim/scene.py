@@ -1,6 +1,6 @@
-"""화면이 몸을 그릴 수 있게 모델을 설명한다 (contracts/sim/scene.schema.json).
+"""화면이 시험장을 그릴 수 있게 모델을 설명한다 (contracts/sim/scene.schema.json).
 
-화면은 로봇을 몰라도 된다: 모양(geom)·메시와 움직이는 몸체 순서만 받아 그리고, 상태 메시지의 자세로 옮긴다.
+화면은 기체를 몰라도 된다: 모양(geom)·메시와 움직이는 몸체 순서만 받아 그리고, 상태 메시지의 자세로 옮긴다.
 """
 
 from __future__ import annotations
@@ -10,10 +10,11 @@ import struct
 import mujoco
 import numpy as np
 
+from .combat import Units
 from .limits import CommandLimits
+from .mecha import MECHA_HEIGHT_M, MECHA_NAME
+from .scenarios import SCENARIOS
 
-# 로봇 모델에서 보이기만 하는 모양의 묶음 (충돌용 모양은 같은 메시를 겹쳐 그리게 되어 뺀다)
-VISUAL_GROUP = 1
 # 열거형 값은 numpy 정수와 해시가 달라 int로 바꿔 키로 쓴다 (모델 배열의 값은 numpy 정수다).
 SHAPES = {
     int(mujoco.mjtGeom.mjGEOM_PLANE): "plane",
@@ -24,6 +25,10 @@ SHAPES = {
     int(mujoco.mjtGeom.mjGEOM_MESH): "mesh",
 }
 MESH_HEADER = struct.Struct("<II")
+ROBOT_DESCRIPTION = (
+    "시험 기체. 등의 추진기로 날고(비행 제어 System 0), 오른팔의 빔 소총으로 쏘고 왼팔의 방패로 막는다. "
+    "이 프로젝트의 독자 설계다."
+)
 
 
 def moving_bodies(model: mujoco.MjModel) -> np.ndarray:
@@ -31,23 +36,13 @@ def moving_bodies(model: mujoco.MjModel) -> np.ndarray:
     return np.array([body for body in range(1, model.nbody) if model.body_weldid[body] != 0], dtype=np.int32)
 
 
-def drawn_geoms(model: mujoco.MjModel, robot_root: int) -> list[int]:
-    geoms = []
-    for geom in range(model.ngeom):
-        on_robot = model.body_rootid[model.geom_bodyid[geom]] == robot_root
-        if (not on_robot or model.geom_group[geom] == VISUAL_GROUP) and int(model.geom_type[geom]) in SHAPES:
-            geoms.append(geom)
-    return geoms
+def drawn_geoms(model: mujoco.MjModel) -> list[int]:
+    return [geom for geom in range(model.ngeom) if int(model.geom_type[geom]) in SHAPES]
 
 
-def describe(
-    model: mujoco.MjModel,
-    robot_root: int,
-    limits: CommandLimits,
-    rates: dict[str, float],
-) -> dict:
+def describe(model: mujoco.MjModel, units: Units, limits: CommandLimits, rates: dict[str, float]) -> dict:
     geoms = []
-    for geom in drawn_geoms(model, robot_root):
+    for geom in drawn_geoms(model):
         shape = SHAPES[int(model.geom_type[geom])]
         item = {
             "body": int(model.geom_bodyid[geom]),
@@ -70,13 +65,17 @@ def describe(
         for mesh in range(model.nmesh)
     ]
     return {
-        "robot": {
-            "name": "Unitree G1 (다리 12관절)",
-            "description": "시험용 몸. 다리는 미리 학습된 걷기 정책이 움직이고 윗몸은 고정되어 있다.",
-        },
+        "robot": {"name": MECHA_NAME, "description": ROBOT_DESCRIPTION, "height": MECHA_HEIGHT_M},
         "movingBodies": moving_bodies(model).tolist(),
         "geoms": geoms,
         "meshes": meshes,
+        "units": [
+            {"id": unit.id, "kind": unit.kind, "name": unit.name, "body": unit.body} for unit in units.all.values()
+        ],
+        "scenarios": [
+            {"name": scenario.name, "label": scenario.label, "description": scenario.description}
+            for scenario in SCENARIOS.values()
+        ],
         "limits": limits.as_dict(),
         "rates": rates,
     }

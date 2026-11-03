@@ -1,58 +1,54 @@
-"""화면용 모델 설명: 화면이 로봇을 몰라도 그릴 수 있는지."""
+"""화면용 모델 설명: 화면이 기체를 몰라도 시험장을 그릴 수 있는지."""
 
 from __future__ import annotations
 
-import struct
-
 import pytest
 
+from robot_sim.drones import MAX_DRONES
 from robot_sim.limits import DEFAULT_LIMITS
-from robot_sim.scene import MESH_HEADER, describe, mesh_binary, moving_bodies
-from robot_sim.simulation import ROBOT_ROOT_BODY
+from robot_sim.scenarios import SCENARIOS
+from robot_sim.scene import describe, mesh_binary, moving_bodies
 
 RATES = {"physicsHz": 500.0, "controlHz": 50.0, "stateHz": 50.0}
 
 
-def test_describes_robot_visuals_and_floor(arena_model):
-    """로봇의 보이는 모양(메시)과 바닥을 알리고, 로봇의 충돌용 모양은 겹쳐 그리지 않게 뺀다"""
-    scene = describe(arena_model, arena_model.body(ROBOT_ROOT_BODY).id, DEFAULT_LIMITS, RATES)
+@pytest.fixture
+def scene(simulation):
+    return describe(simulation.model, simulation.units, DEFAULT_LIMITS, RATES)
 
+
+def test_describes_floor_mecha_and_drones(scene, simulation):
+    """바닥 하나와 기체·드론의 모양을 알린다 (기본 도형이라 메시는 없다)"""
     shapes = [geom["shape"] for geom in scene["geoms"]]
-    robot_geoms = [geom for geom in scene["geoms"] if geom["body"] != 0]
+    bodies = {geom["body"] for geom in scene["geoms"]}
+
     assert shapes.count("plane") == 1
-    assert robot_geoms
-    assert all(geom["shape"] == "mesh" for geom in robot_geoms)
-    assert len(robot_geoms) == arena_model.nmesh
+    assert scene["meshes"] == []
+    assert simulation.root_body in bodies
+    assert all(unit["body"] in bodies for unit in scene["units"])
 
 
-def test_moving_bodies_are_the_robot_links(arena_model):
-    """움직이는 몸체는 바닥(세계)을 빼고 골반과 다리 12마디다"""
-    bodies = moving_bodies(arena_model)
+def test_lists_every_unit_including_parked_drones(scene):
+    """장면에서 쓰지 않는 드론도 모델에 있어 모두 알린다 (상태 메시지는 쓰는 드론만 보낸다)"""
+    kinds = [unit["kind"] for unit in scene["units"]]
 
-    assert len(bodies) == 13
-    assert 0 not in bodies
+    assert kinds.count("mecha") == 1
+    assert kinds.count("drone") == MAX_DRONES
 
 
-def test_limits_and_rates_are_published(arena_model):
-    scene = describe(arena_model, arena_model.body(ROBOT_ROOT_BODY).id, DEFAULT_LIMITS, RATES)
+def test_moving_bodies_cover_mecha_arms_and_drones(simulation):
+    """움직이는 몸체: 기체 몸통, 양쪽 어깨·팔, 드론"""
+    assert len(moving_bodies(simulation.model)) == 1 + 4 + MAX_DRONES
 
-    assert scene["limits"]["forward"] == {"min": -0.5, "max": 1.0}
+
+def test_publishes_robot_size_scenarios_limits_and_rates(scene):
+    assert scene["robot"]["height"] == 16.0
+    assert [scenario["name"] for scenario in scene["scenarios"]] == list(SCENARIOS)
+    assert scene["limits"]["up"] == {"min": -15.0, "max": 20.0}
     assert scene["rates"]["controlHz"] == 50.0
 
 
-def test_mesh_binary_layout(arena_model):
-    """메시 바이너리: 머리말(꼭짓점 수, 삼각형 수) 뒤에 xyz(f32)와 번호(u32)가 이어진다"""
-    data = mesh_binary(arena_model, 0)
-
-    vertices, faces = MESH_HEADER.unpack_from(data)
-    assert vertices == arena_model.mesh_vertnum[0]
-    assert faces == arena_model.mesh_facenum[0]
-    assert len(data) == MESH_HEADER.size + vertices * 3 * 4 + faces * 3 * 4
-    first_index = struct.unpack_from("<I", data, MESH_HEADER.size + vertices * 12)[0]
-    assert first_index < vertices
-
-
-@pytest.mark.parametrize("mesh", [-1, 10_000], ids=["음수", "없는 번호"])
-def test_unknown_mesh_raises(arena_model, mesh):
+@pytest.mark.parametrize("mesh", [-1, 0], ids=["음수", "메시 없음"])
+def test_unknown_mesh_raises(simulation, mesh):
     with pytest.raises(KeyError):
-        mesh_binary(arena_model, mesh)
+        mesh_binary(simulation.model, mesh)

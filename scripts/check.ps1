@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    커밋 전 로컬 점검: 시험용 몸 파일 확인, 몸(sim) 린트·형식·시험(컨테이너), 화면(bench) 린트·형식·시험·빌드.
+    커밋 전 로컬 점검: 몸(sim) 린트·형식·시험(컨테이너), 화면(bench) 린트·형식·시험·빌드.
 .EXAMPLE
     .\scripts\check.ps1
 #>
@@ -29,7 +29,6 @@ function Invoke-Step([string]$Name, [string]$Directory, [scriptblock]$Command) {
     $Results.Add([pscustomobject]@{ 단계 = $Name; 결과 = $(if ($passed) { '통과' } else { '실패' }); '걸린 시간(초)' = $seconds })
 }
 
-Invoke-Step '시험용 몸 파일 (해시 확인)' $Root { python sim\tools\fetch_assets.py }
 Invoke-Step '몸: 형식·린트·시험 (컨테이너)' $Root {
     docker compose run --rm --build sim sh -c 'ruff format --check . && ruff check . && pytest -q'
 }

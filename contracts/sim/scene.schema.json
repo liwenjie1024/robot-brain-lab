@@ -2,16 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://robot-brain-lab.local/contracts/sim/scene.schema.json",
   "title": "SceneDescription",
-  "description": "GET /scene. 화면이 몸을 그리고, 명령을 보내는 쪽이 범위를 알 수 있게 한다. 메시 모양은 GET /meshes/{id}.",
+  "description": "GET /scene. 화면이 시험장을 그리고, 명령을 보내는 쪽이 범위·유닛·시험 장면을 알 수 있게 한다. 메시 모양은 GET /meshes/{id}.",
   "type": "object",
   "properties": {
     "robot": {
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "height": { "description": "기체 키 m (화면이 카메라 거리를 정한다)", "type": "number" }
       },
-      "required": ["name", "description"],
+      "required": ["name", "description", "height"],
       "additionalProperties": false
     },
     "movingBodies": {
@@ -28,6 +29,15 @@
       "type": "array",
       "items": { "$ref": "#/$defs/Mesh" }
     },
+    "units": {
+      "description": "맞힐 수 있는 것 모두 (장면에서 쓰지 않는 드론 포함, 지금 쓰는 것은 상태 메시지의 units)",
+      "type": "array",
+      "items": { "$ref": "#/$defs/UnitInfo" }
+    },
+    "scenarios": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ScenarioInfo" }
+    },
     "limits": { "$ref": "#/$defs/Limits" },
     "rates": {
       "type": "object",
@@ -40,7 +50,7 @@
       "additionalProperties": false
     }
   },
-  "required": ["robot", "movingBodies", "geoms", "meshes", "limits", "rates"],
+  "required": ["robot", "movingBodies", "geoms", "meshes", "units", "scenarios", "limits", "rates"],
   "additionalProperties": false,
   "$defs": {
     "Range": {
@@ -51,16 +61,40 @@
     },
     "Limits": {
       "title": "Limits",
-      "description": "명령 값의 범위 (걷기 정책이 배운 범위 안쪽). pushForce는 밀기 힘의 크기 N",
+      "description": "명령 값의 범위 (비행 제어가 기체를 똑바로 세운 채 따라갈 수 있는 범위). 속도 m/s, turn rad/s, pushForce는 밀기 힘의 크기 N",
       "type": "object",
       "properties": {
         "forward": { "$ref": "#/$defs/Range" },
         "sideways": { "$ref": "#/$defs/Range" },
+        "up": { "$ref": "#/$defs/Range" },
         "turn": { "$ref": "#/$defs/Range" },
         "pushForce": { "$ref": "#/$defs/Range" },
         "pushDurationMs": { "$ref": "#/$defs/Range" }
       },
-      "required": ["forward", "sideways", "turn", "pushForce", "pushDurationMs"],
+      "required": ["forward", "sideways", "up", "turn", "pushForce", "pushDurationMs"],
+      "additionalProperties": false
+    },
+    "UnitInfo": {
+      "title": "UnitInfo",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["mecha", "drone"] },
+        "name": { "type": "string" },
+        "body": { "description": "이 유닛의 몸체 번호 (화면이 감추거나 이름표를 단다)", "type": "integer" }
+      },
+      "required": ["id", "kind", "name", "body"],
+      "additionalProperties": false
+    },
+    "ScenarioInfo": {
+      "title": "ScenarioInfo",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "label", "description"],
       "additionalProperties": false
     },
     "Geom": {

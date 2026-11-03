@@ -2,12 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://robot-brain-lab.local/contracts/sim/message.schema.json",
   "title": "SimMessage",
-  "description": "몸(시뮬레이터)이 WebSocket으로 보내는 메시지.",
+  "description": "몸(시뮬레이터)이 WebSocket으로 보내는 메시지. 상태는 제어 주기마다(밀리면 가장 새 것만), 답과 사건은 빠짐없이 만든 순서대로 온다.",
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/StateMessage" },
     { "$ref": "#/$defs/AckMessage" },
-    { "$ref": "#/$defs/RejectedMessage" }
+    { "$ref": "#/$defs/RejectedMessage" },
+    { "$ref": "#/$defs/ShotMessage" },
+    { "$ref": "#/$defs/DestroyedMessage" }
   ],
   "$defs": {
     "Vector3": {
@@ -16,35 +18,97 @@
       "minItems": 3,
       "maxItems": 3
     },
-    "Velocity": {
-      "title": "Velocity",
+    "FlightVelocity": {
+      "title": "FlightVelocity",
+      "description": "기수 방향 기준 속도. forward: 앞 m/s, sideways: 왼쪽 m/s, up: 위 m/s, turn: 왼쪽으로 도는 rad/s",
       "type": "object",
       "properties": {
-        "forward": { "description": "앞(+)/뒤(-) m/s", "type": "number" },
-        "sideways": { "description": "왼쪽(+)/오른쪽(-) m/s", "type": "number" },
-        "turn": { "description": "왼쪽으로 도는(+) rad/s", "type": "number" }
+        "forward": { "type": "number" },
+        "sideways": { "type": "number" },
+        "up": { "type": "number" },
+        "turn": { "type": "number" }
       },
-      "required": ["forward", "sideways", "turn"],
+      "required": ["forward", "sideways", "up", "turn"],
       "additionalProperties": false
     },
-    "Posture": {
-      "title": "Posture",
-      "description": "standing: 서 있음, fallen: 넘어짐 (골반이 낮거나 많이 기욺)",
-      "enum": ["standing", "fallen"]
+    "MechaMode": {
+      "title": "MechaMode",
+      "description": "landed: 착지(추진기 끔), flying: 비행 중, destroyed: 파괴됨",
+      "enum": ["landed", "flying", "destroyed"]
     },
-    "RobotStatus": {
-      "title": "RobotStatus",
-      "description": "position: 골반 위치 [x, y, z] m (x 앞, y 왼쪽, z 위), velocity: 몸 기준 실제 속도, command: 지금 따르는 걷기 명령",
+    "WeaponStatus": {
+      "title": "WeaponStatus",
+      "description": "빔 소총. ready: 지금 쏠 수 있음, cooldown: 식는 데 남은 초, aimTarget: 겨누는 유닛, aimError: 총열이 겨눈 점에서 벗어난 각(도), aimPoint: 겨눈 점",
+      "type": "object",
+      "properties": {
+        "ready": { "type": "boolean" },
+        "cooldown": { "type": "number" },
+        "aimTarget": { "type": ["string", "null"] },
+        "aimError": { "type": "number" },
+        "aimPoint": { "$ref": "#/$defs/Vector3" }
+      },
+      "required": ["ready", "cooldown", "aimTarget"],
+      "additionalProperties": false
+    },
+    "GuardStatus": {
+      "title": "GuardStatus",
+      "description": "방패. raised: 들고 있음, unit: 막는 쪽의 유닛 (없으면 앞)",
+      "type": "object",
+      "properties": {
+        "raised": { "type": "boolean" },
+        "unit": { "type": ["string", "null"] }
+      },
+      "required": ["raised", "unit"],
+      "additionalProperties": false
+    },
+    "MechaStatus": {
+      "title": "MechaStatus",
+      "description": "기체 상태. position: 몸통 중심 [x, y, z] m, heading: 기수 방향 rad (x축에서 왼쪽으로), altitude: 발바닥 높이 m, velocity: 실제 속도, command: 따르는 비행 명령, hp·maxHp: 체력, energy: 소총 에너지 (0~100)",
       "type": "object",
       "properties": {
         "position": { "$ref": "#/$defs/Vector3" },
-        "yaw": { "description": "바라보는 방향 rad (x축에서 왼쪽으로 돈 각)", "type": "number" },
-        "velocity": { "$ref": "#/$defs/Velocity" },
-        "command": { "$ref": "#/$defs/Velocity" },
-        "posture": { "$ref": "#/$defs/Posture" },
+        "heading": { "type": "number" },
+        "altitude": { "type": "number" },
+        "velocity": { "$ref": "#/$defs/FlightVelocity" },
+        "command": { "$ref": "#/$defs/FlightVelocity" },
+        "mode": { "$ref": "#/$defs/MechaMode" },
+        "hp": { "type": "number" },
+        "maxHp": { "type": "number" },
+        "energy": { "type": "number" },
+        "weapon": { "$ref": "#/$defs/WeaponStatus" },
+        "guard": { "$ref": "#/$defs/GuardStatus" },
         "pushing": { "description": "시험용 밀기가 지금 걸려 있는지", "type": "boolean" }
       },
-      "required": ["position", "yaw", "velocity", "command", "posture", "pushing"],
+      "required": ["position", "heading", "altitude", "velocity", "command", "mode", "hp", "maxHp", "energy", "weapon", "guard", "pushing"],
+      "additionalProperties": false
+    },
+    "UnitStatus": {
+      "title": "UnitStatus",
+      "description": "이 장면의 드론. position·velocity: 세계 좌표, alive: 살아 있음, armed: 반격함",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "drone" },
+        "name": { "type": "string" },
+        "position": { "$ref": "#/$defs/Vector3" },
+        "velocity": { "$ref": "#/$defs/Vector3" },
+        "hp": { "type": "number" },
+        "maxHp": { "type": "number" },
+        "alive": { "type": "boolean" },
+        "armed": { "type": "boolean" }
+      },
+      "required": ["id", "kind", "name", "position", "velocity", "hp", "maxHp", "alive", "armed"],
+      "additionalProperties": false
+    },
+    "Threat": {
+      "title": "Threat",
+      "description": "기체를 조준하고 있는 유닛과 쏘기까지 남은 초",
+      "type": "object",
+      "properties": {
+        "from": { "type": "string" },
+        "secondsToFire": { "type": "number" }
+      },
+      "required": ["from", "secondsToFire"],
       "additionalProperties": false
     },
     "StateMessage": {
@@ -54,15 +118,18 @@
       "properties": {
         "type": { "const": "state" },
         "seq": { "description": "보낸 순서 (처음으로 되돌려도 계속 는다)", "type": "integer" },
-        "simTime": { "description": "처음 자세 뒤 지난 시뮬레이션 시각 s", "type": "number" },
+        "simTime": { "description": "처음으로 되돌린 뒤 지난 시뮬레이션 시각 s", "type": "number" },
+        "scenario": { "type": "string" },
         "bodies": {
           "description": "움직이는 몸체마다 [x, y, z, qw, qx, qy, qz] 7개씩 (순서는 GET /scene의 movingBodies)",
           "type": "array",
           "items": { "type": "number" }
         },
-        "robot": { "$ref": "#/$defs/RobotStatus" }
+        "mecha": { "$ref": "#/$defs/MechaStatus" },
+        "units": { "type": "array", "items": { "$ref": "#/$defs/UnitStatus" } },
+        "threats": { "type": "array", "items": { "$ref": "#/$defs/Threat" } }
       },
-      "required": ["type", "seq", "simTime", "bodies", "robot"],
+      "required": ["type", "seq", "simTime", "scenario", "bodies", "mecha", "units", "threats"],
       "additionalProperties": false
     },
     "AckMessage": {
@@ -88,6 +155,45 @@
         "reason": { "type": "string" }
       },
       "required": ["type", "reason"],
+      "additionalProperties": false
+    },
+    "Hit": {
+      "title": "Hit",
+      "description": "맞힌 유닛. blocked: 방패에 막혀 피해가 없음",
+      "type": "object",
+      "properties": {
+        "unit": { "type": "string" },
+        "damage": { "type": "number" },
+        "blocked": { "type": "boolean" }
+      },
+      "required": ["unit", "damage", "blocked"],
+      "additionalProperties": false
+    },
+    "ShotMessage": {
+      "title": "ShotMessage",
+      "description": "사격. from에서 to까지 나갔다 (to는 처음 닿은 곳이나 사거리 끝). hit이 없으면 빗나감.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "shot" },
+        "simTime": { "type": "number" },
+        "shooter": { "type": "string" },
+        "from": { "$ref": "#/$defs/Vector3" },
+        "to": { "$ref": "#/$defs/Vector3" },
+        "hit": { "$ref": "#/$defs/Hit" }
+      },
+      "required": ["type", "simTime", "shooter", "from", "to"],
+      "additionalProperties": false
+    },
+    "DestroyedMessage": {
+      "title": "DestroyedMessage",
+      "description": "유닛이 파괴되었다.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "destroyed" },
+        "simTime": { "type": "number" },
+        "unit": { "type": "string" }
+      },
+      "required": ["type", "simTime", "unit"],
       "additionalProperties": false
     }
   }

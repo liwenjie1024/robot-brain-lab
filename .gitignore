@@ -5,8 +5,6 @@ coverage/
 .env
 .cache/
 
-# 시험용 몸 파일은 sim/tools/fetch_assets.py가 고정한 커밋에서 내려받는다 (해시는 assets.lock.json).
-sim/assets/
 
 __pycache__/
 *.pyc

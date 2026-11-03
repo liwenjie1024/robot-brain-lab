@@ -46,7 +46,11 @@ class ClientChannel:
         self._wake.set()
 
     def reply(self, message: dict) -> None:
-        self._outbox.append((False, json.dumps(message, ensure_ascii=False, separators=COMPACT_JSON)))
+        self.send_in_order(json.dumps(message, ensure_ascii=False, separators=COMPACT_JSON))
+
+    def send_in_order(self, text: str) -> None:
+        """합치지 않고 빠짐없이 보낸다 (명령의 답, 사격·격파 사건)."""
+        self._outbox.append((False, text))
         self._wake.set()
 
     async def run_sender(self) -> None:
@@ -59,7 +63,7 @@ class ClientChannel:
 
 
 class StateHub:
-    """시뮬레이션 스레드가 만든 상태를 이벤트 루프에서 모든 연결로 나눠 준다."""
+    """시뮬레이션 스레드가 만든 상태와 사건을 이벤트 루프에서 모든 연결로 나눠 준다."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -71,14 +75,22 @@ class StateHub:
     def remove(self, client: ClientChannel) -> None:
         self._clients.discard(client)
 
-    def publish_from_thread(self, message: dict) -> None:
+    def publish_state_from_thread(self, message: dict) -> None:
         # JSON은 시뮬레이션 스레드에서 만들어 이벤트 루프의 일을 줄인다.
-        text = json.dumps(message, separators=COMPACT_JSON)
-        self._loop.call_soon_threadsafe(self._fan_out, text)
+        text = json.dumps(message, ensure_ascii=False, separators=COMPACT_JSON)
+        self._loop.call_soon_threadsafe(self._fan_out_state, text)
 
-    def _fan_out(self, text: str) -> None:
+    def publish_event_from_thread(self, message: dict) -> None:
+        text = json.dumps(message, ensure_ascii=False, separators=COMPACT_JSON)
+        self._loop.call_soon_threadsafe(self._fan_out_event, text)
+
+    def _fan_out_state(self, text: str) -> None:
         for client in self._clients:
             client.offer_state(text)
+
+    def _fan_out_event(self, text: str) -> None:
+        for client in self._clients:
+            client.send_in_order(text)
 
 
 HUB = web.AppKey("hub", StateHub)
@@ -88,10 +100,10 @@ def create_app(simulation: Simulation, limits: CommandLimits) -> web.Application
     app = web.Application()
     app[SIMULATION] = simulation
     app[LIMITS] = limits
-    control_hz = 1.0 / simulation.controller.config.control_dt
+    control_hz = 1.0 / simulation.control_dt
     app[SCENE] = describe(
         simulation.model,
-        simulation.pelvis_body,
+        simulation.units,
         limits,
         {"physicsHz": 1.0 / simulation.model.opt.timestep, "controlHz": control_hz, "stateHz": control_hz},
     )
@@ -107,7 +119,9 @@ def create_app(simulation: Simulation, limits: CommandLimits) -> web.Application
 async def _start_simulation(app: web.Application) -> None:
     hub = StateHub(asyncio.get_running_loop())
     simulation = app[SIMULATION]
-    runner = RealtimeRunner(simulation, moving_bodies(simulation.model), hub.publish_from_thread)
+    runner = RealtimeRunner(
+        simulation, moving_bodies(simulation.model), hub.publish_state_from_thread, hub.publish_event_from_thread
+    )
     app[HUB] = hub
     app[RUNNER] = runner
     runner.start()

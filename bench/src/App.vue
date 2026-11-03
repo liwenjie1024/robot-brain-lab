@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { dateKoKR, koKR, NAlert, NButton, NConfigProvider, NMessageProvider, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
+import CombatLog from '@/components/CombatLog.vue'
 import CommandLog from '@/components/CommandLog.vue'
-import ControlPanel from '@/components/ControlPanel.vue'
+import FlightPanel from '@/components/FlightPanel.vue'
+import MechaPanel from '@/components/MechaPanel.vue'
 import RobotView from '@/components/RobotView.vue'
-import StatusPanel from '@/components/StatusPanel.vue'
-import type { Velocity } from '@/control/drive'
+import ScenarioPanel from '@/components/ScenarioPanel.vue'
+import UnitsPanel from '@/components/UnitsPanel.vue'
+import type { FlightVelocity } from '@/control/drive'
+import type { ScenarioName } from '@/sim/generated/command'
 import { SimClient } from '@/sim/simClient'
 import { useSim } from '@/sim/useSim'
 import { PHASE_LABELS } from '@/utils/labels'
@@ -14,14 +18,17 @@ const SIM_BASE_URL = '/sim'
 
 const client = new SimClient({ baseUrl: SIM_BASE_URL })
 const sim = useSim(client)
-const { phase, phaseDetail, scene, state, log } = sim
+// 기록 목록은 컴포넌트 이름(CombatLog·CommandLog)과 겹치지 않게 부른다 (템플릿이 같은 이름의 값을 먼저 쓴다).
+const { phase, phaseDetail, scene, state, log: commandEntries, combatLog: combatEntries } = sim
 
 const phaseLabel = computed(() => PHASE_LABELS[phase.value])
 const disabledReason = computed(() =>
   phase.value === 'open' ? null : '몸(시뮬레이터)과 연결되어야 명령을 보낼 수 있습니다.',
 )
+const names = computed(() => new Map((scene.value?.units ?? []).map((unit) => [unit.id, unit.name])))
+const nameOf = (id: string) => names.value.get(id) ?? id
 
-function drive(label: string, velocity: Velocity) {
+function fly(label: string, velocity: FlightVelocity) {
   void sim.send(label, { type: 'velocity', ...velocity })
 }
 
@@ -29,9 +36,15 @@ function push(label: string, force: [number, number, number], durationMs: number
   void sim.send(label, { type: 'push', force, durationMs })
 }
 
-function reset() {
-  void sim.send('처음 자세로', { type: 'reset' })
+function reset(scenario: string) {
+  void sim.send('처음으로', { type: 'reset', scenario: scenario as ScenarioName })
 }
+
+const fire = () => void sim.send('쏘기', { type: 'fire' })
+const aim = (unit: string) => void sim.send(`${nameOf(unit)} 겨누기`, { type: 'aim', unit })
+const guard = (unit: string) => void sim.send(`${nameOf(unit)} 쪽 방패`, { type: 'guard', raised: true, unit })
+const lowerAim = () => void sim.send('소총 내리기', { type: 'lowerAim' })
+const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', raised: false })
 </script>
 
 <template>
@@ -41,7 +54,9 @@ function reset() {
         <header class="header">
           <div>
             <h1>로봇 두뇌 시험장</h1>
-            <p class="subtitle">1단계: 몸(물리 시뮬레이션)과 운동 제어(System 0) — 사람이 걷기 명령을 직접 보냅니다</p>
+            <p class="subtitle">
+              2단계: 날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }} — 사람이 비행·사격 명령을 직접 보냅니다
+            </p>
           </div>
           <n-tooltip>
             <template #trigger>
@@ -63,13 +78,18 @@ function reset() {
             <robot-view :client="client" :scene="scene" />
           </section>
           <aside class="side">
-            <status-panel :state="state" :stale="phase !== 'open'" />
-            <control-panel :limits="scene.limits" :yaw="state?.robot.yaw ?? 0" :disabled-reason="disabledReason"
-                           :fallen="state?.robot.posture === 'fallen'" @drive="drive" @push="push" @reset="reset" />
-            <command-log :entries="log" />
+            <mecha-panel :state="state" :names="names" :stale="phase !== 'open'" />
+            <units-panel :state="state" :disabled-reason="disabledReason" @aim="aim" @guard="guard" @fire="fire"
+                         @lower-aim="lowerAim" @lower-guard="lowerGuard" />
+            <scenario-panel :scenarios="scene.scenarios" :current="state?.scenario ?? null"
+                            :disabled-reason="disabledReason" @reset="reset" />
+            <flight-panel :limits="scene.limits" :heading="state?.mecha.heading ?? 0" :disabled-reason="disabledReason"
+                          :destroyed="state?.mecha.mode === 'destroyed'" @fly="fly" @push="push" @fire="fire" />
+            <combat-log :entries="combatEntries" :names="names" />
+            <command-log :entries="commandEntries" />
           </aside>
         </main>
-        <p v-else-if="phase === 'loading-scene'" class="loading">몸(시뮬레이터)에서 모양을 받는 중입니다…</p>
+        <p v-else-if="phase === 'loading-scene'" class="loading">몸(시뮬레이터)에서 시험장 모양을 받는 중입니다…</p>
       </div>
     </n-message-provider>
   </n-config-provider>
@@ -86,7 +106,7 @@ body {
 
 <style scoped>
 .page {
-  max-width: 1600px;
+  max-width: 1700px;
   margin: 0 auto;
   padding: 16px;
 }
@@ -115,10 +135,13 @@ h1 {
 }
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 400px;
   gap: 12px;
+  align-items: start;
 }
 .view {
+  position: sticky;
+  top: 12px;
   height: calc(100vh - 120px);
   min-height: 420px;
 }
@@ -135,6 +158,7 @@ h1 {
     grid-template-columns: 1fr;
   }
   .view {
+    position: static;
     height: 60vh;
   }
 }

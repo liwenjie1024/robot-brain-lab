@@ -1,7 +1,7 @@
 import Ajv2020 from 'ajv/dist/2020'
 import messageSchema from '../../../contracts/sim/message.schema.json'
 import type { SimCommand } from './generated/command'
-import type { SimMessage, StateMessage } from './generated/message'
+import type { DestroyedMessage, ShotMessage, SimMessage, StateMessage } from './generated/message'
 import type { SceneDescription } from './generated/scene'
 
 /**
@@ -34,10 +34,14 @@ export interface SimClientOptions {
   commandTimeoutMs?: number
 }
 
+/** 사격·격파처럼 빠짐없이 오는 사건 */
+export type CombatEvent = ShotMessage | DestroyedMessage
+
 export interface SimClientEvents {
   phase: (phase: ConnectionPhase, detail?: string) => void
   scene: (scene: SceneDescription) => void
   state: (state: StateMessage) => void
+  combat: (event: CombatEvent) => void
   invalidMessage: (reason: string) => void
 }
 
@@ -60,6 +64,7 @@ export class SimClient {
     phase: new Set(),
     scene: new Set(),
     state: new Set(),
+    combat: new Set(),
     invalidMessage: new Set(),
   }
   private nextId = 1
@@ -194,6 +199,10 @@ export class SimClient {
         if (message.id) {
           this.finish(message.id, false, message.reason)
         }
+        break
+      case 'shot':
+      case 'destroyed':
+        this.emit('combat', message)
         break
     }
   }
