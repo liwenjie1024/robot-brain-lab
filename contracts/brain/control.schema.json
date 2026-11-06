@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://robot-brain-lab.local/contracts/brain/control.schema.json",
   "title": "BrainControl",
-  "description": "화면이 두뇌에게 보내는 지시. 기술을 직접 고르거나(setSkill), 말로 명령해 느린 뇌가 계획을 짜게 한다(order). 두뇌는 controlResult로 답한다.",
+  "description": "화면이 두뇌에게 보내는 지시. 기술을 직접 고르거나(setSkill), 말로 명령해 느린 뇌가 계획을 짜게 하거나(order), 같은 시험을 여러 번 돌려 점수를 낸다(startTrials). 두뇌는 controlResult로 답한다.",
   "type": "object",
   "oneOf": [
     {
@@ -16,6 +16,12 @@
     },
     {
       "$ref": "#/$defs/CancelPlan"
+    },
+    {
+      "$ref": "#/$defs/StartTrials"
+    },
+    {
+      "$ref": "#/$defs/StopTrials"
     }
   ],
   "$defs": {
@@ -124,6 +130,128 @@
       "properties": {
         "type": {
           "const": "cancelPlan"
+        },
+        "id": {
+          "$ref": "#/$defs/ControlId"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "SkillTrialSetup": {
+      "title": "SkillTrialSetup",
+      "description": "두뇌에게 이 기술과 조준 경고 반응을 맡겨 시험한다 (표적은 두뇌가 고른다)",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "skill"
+        },
+        "skill": {
+          "$ref": "#/$defs/SkillName"
+        },
+        "evasion": {
+          "$ref": "#/$defs/Evasion"
+        }
+      },
+      "required": [
+        "kind",
+        "skill",
+        "evasion"
+      ],
+      "additionalProperties": false
+    },
+    "OrderTrialSetup": {
+      "title": "OrderTrialSetup",
+      "description": "판마다 이 말로 명령해 시험한다 (느린 뇌가 판마다 새로 계획을 짠다)",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "order"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "TrialSetup": {
+      "title": "TrialSetup",
+      "description": "시험에서 비교할 것 하나",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SkillTrialSetup"
+        },
+        {
+          "$ref": "#/$defs/OrderTrialSetup"
+        }
+      ]
+    },
+    "StartTrials": {
+      "title": "StartTrials",
+      "description": "시험: 비교할 것(setups)마다 장면을 처음으로 되돌려 runs판씩 돌리고, 판마다 결과와 점수를 낸다. 한 판은 드론을 다 격파하거나, 기체가 파괴되거나, timeLimitS초가 지나면 끝난다.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "startTrials"
+        },
+        "id": {
+          "$ref": "#/$defs/ControlId"
+        },
+        "scenario": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "setups": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/TrialSetup"
+          }
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "timeLimitS": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 120
+        },
+        "startSpreadS": {
+          "description": "판마다 두뇌가 맡는 때를 장면을 되돌린 뒤 0~startSpreadS초 사이로 고르게 늦춘다 (n판이면 판마다 startSpreadS÷n씩). 드론이 조준하는 때와 두뇌가 맡는 때의 어긋남을 고루 보려고. 0이면 모든 판이 똑같다 (몸과 두뇌는 같은 때 맡으면 같은 결과를 낸다).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        }
+      },
+      "required": [
+        "type",
+        "scenario",
+        "setups",
+        "runs",
+        "timeLimitS",
+        "startSpreadS"
+      ],
+      "additionalProperties": false
+    },
+    "StopTrials": {
+      "title": "StopTrials",
+      "description": "돌고 있는 시험을 멈춘다 (끝난 판의 결과는 남긴다)",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "stopTrials"
         },
         "id": {
           "$ref": "#/$defs/ControlId"

@@ -10,6 +10,7 @@ export class BrainMetrics {
   private ticks: { at: number; micros: number }[] = []
   private commands: number[] = []
   private lastReactionMs: number | null = null
+  private reactions: number[] = []
   private shots = 0
   private hits = 0
   private kills = 0
@@ -21,6 +22,7 @@ export class BrainMetrics {
     this.ticks = []
     this.commands = []
     this.lastReactionMs = null
+    this.reactions = []
     this.shots = 0
     this.hits = 0
     this.kills = 0
@@ -39,6 +41,12 @@ export class BrainMetrics {
 
   reaction(milliseconds: number): void {
     this.lastReactionMs = milliseconds
+    this.reactions.push(milliseconds)
+  }
+
+  /** 처음으로 되돌린 뒤의 반응 시간 평균 (시험 한 판의 값) */
+  averageReactionMs(): number | null {
+    return this.reactions.length ? Math.round(this.reactions.reduce((sum, value) => sum + value, 0) / this.reactions.length) : null
   }
 
   shot(): void {

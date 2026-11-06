@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrainStatus, Decision } from '@shared/brain/generated/status'
-import { brainStatus } from '@shared/test/fixtures'
+import { brainStatus, trialSeries } from '@shared/test/fixtures'
 import { BrainClient, type BrainPhase, brainSocketUrl } from './brainClient'
 
 class FakeSocket {
@@ -74,6 +74,20 @@ describe('BrainClient', () => {
 
     expect(statuses).toEqual([STATUS])
     expect(decisions.map((decision) => decision.kind)).toEqual(['reflex'])
+  })
+
+  it('시험 결과가 든 상태도 규약대로 받는다 (비교한 것의 모양은 지시 규약에서 가져와 확인)', () => {
+    const { client, socket } = connected()
+    const statuses: BrainStatus[] = []
+    client.on('status', (status) => statuses.push(status))
+    const withTrials = brainStatus({ trials: trialSeries() })
+    const badSetup = structuredClone(withTrials)
+    ;(badSetup.trials!.setups[0]!.setup as { kind: string }).kind = 'dance'
+
+    socket.receive(withTrials)
+    socket.receive(badSetup)
+
+    expect(statuses).toEqual([withTrials])
   })
 
   it('지시에 번호를 붙여 보내고, 같은 번호의 답으로 끝난다', async () => {

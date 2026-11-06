@@ -1,15 +1,16 @@
 import { SimClient } from '@shared/sim/simClient'
 import { Brain } from './brain'
-import { BRAIN_PORT, OLLAMA_URL, PLANNER_CHECK_MS, PLANNER_MODEL, SIM_BASE_URL, SIM_RETRY_MS } from './config'
+import { BRAIN_PORT, OLLAMA_URL, PLANNER_CHECK_MS, PLANNER_MODEL, REPO_ROOT, SIM_BASE_URL, SIM_RETRY_MS, TRIAL_RESULTS_DIR } from './config'
 import { BrainServer } from './server'
 import { OllamaModel } from './system2/model'
+import { FileTrialStore } from './trials/trialStore'
 
 /**
  * 두뇌를 띄운다: 몸(시뮬레이터)에 붙어 상태를 받고, 느린 뇌의 언어 모델(Ollama)을 찾고, 화면이 붙을 서버를 연다.
  *   npm run brain   (저장소 맨 위)
  */
 const client = new SimClient({ baseUrl: SIM_BASE_URL })
-const brain = new Brain(client, new OllamaModel(PLANNER_MODEL, OLLAMA_URL))
+const brain = new Brain(client, new OllamaModel(PLANNER_MODEL, OLLAMA_URL), undefined, new FileTrialStore(TRIAL_RESULTS_DIR, REPO_ROOT))
 let targets = new Set<string>()
 
 client.on('scene', (scene) => {
@@ -44,6 +45,7 @@ const plannerTimer = setInterval(() => void brain.system2.refreshPlanner(), PLAN
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     clearInterval(plannerTimer)
+    brain.stopTrials()
     brain.cancelPlan()
     client.close()
     void server.close().then(() => process.exit(0))

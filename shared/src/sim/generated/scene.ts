@@ -94,6 +94,14 @@ export interface ScenarioInfo {
   name: string
   label: string
   description: string
+  /**
+   * 이 장면에서 쓰는 드론 수 (0이면 드론 없이 날기만)
+   */
+  drones: number
+  /**
+   * 그 가운데 반격하는(쏘는) 드론 수
+   */
+  armedDrones: number
 }
 /**
  * 명령 값의 범위 (비행 제어가 기체를 똑바로 세운 채 따라갈 수 있는 범위). 속도 m/s, turn rad/s, pushForce는 밀기 힘의 크기 N

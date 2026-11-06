@@ -20,6 +20,8 @@ for (const [group, schemas] of Object.entries(groups)) {
     const schema = JSON.parse(await readFile(join(root, 'contracts', group, `${name}.schema.json`), 'utf8'))
     const types = await compile(schema, schema.title, {
       bannerComment: `// contracts/${group}/${name}.schema.json에서 만든 파일이다. 직접 고치지 말고 npm run contracts 로 다시 만든다.`,
+      // 다른 규약 파일을 가리키는 $ref(예: status → control.schema.json#/$defs/TrialSetup)를 같은 폴더에서 찾는다
+      cwd: join(root, 'contracts', group),
       additionalProperties: false,
       unreachableDefinitions: true,
       style: { semi: false, singleQuote: true },

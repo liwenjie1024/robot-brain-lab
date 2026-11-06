@@ -127,6 +127,11 @@ export class System2 {
     return this.run?.cancel(reason) ?? false
   }
 
+  /** 기억한 계획을 잊는다 (시험에서 판마다 언어 모델에 새로 묻게) */
+  forgetPlans(): void {
+    this.cache.clear()
+  }
+
   planStatus(): PlanStatus | null {
     return this.run?.view() ?? null
   }

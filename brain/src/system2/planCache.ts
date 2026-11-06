@@ -30,6 +30,10 @@ export class PlanCache {
     return structuredClone(plan)
   }
 
+  clear(): void {
+    this.entries.clear()
+  }
+
   put(order: string, situation: Situation, plan: Plan): void {
     const key = cacheKey(order, situation)
     this.entries.delete(key)

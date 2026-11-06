@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url'
+
 /** 두뇌를 띄울 때 고를 수 있는 값 (환경 변수). */
 
 /** 몸(시뮬레이터) 주소. 몸은 Docker에서 돈다 (compose.yaml). */
@@ -13,3 +15,7 @@ export const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434'
 export const PLANNER_MODEL = process.env.BRAIN_MODEL ?? 'qwen2.5:7b'
 /** 언어 모델을 쓸 수 있는지 다시 보는 간격 (Ollama를 나중에 띄워도 붙게) */
 export const PLANNER_CHECK_MS = 15_000
+/** 저장소 맨 위 (brain/src에서 두 단계 위) */
+export const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
+/** 끝난 시험을 JSON으로 남기는 곳 (git에 넣지 않는다) */
+export const TRIAL_RESULTS_DIR = process.env.TRIAL_RESULTS_DIR ?? fileURLToPath(new URL('../../results/trials', import.meta.url))

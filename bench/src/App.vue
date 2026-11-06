@@ -11,6 +11,7 @@ import MechaPanel from '@/components/MechaPanel.vue'
 import OrderPanel from '@/components/OrderPanel.vue'
 import RobotView from '@/components/RobotView.vue'
 import ScenarioPanel from '@/components/ScenarioPanel.vue'
+import TrialPanel from '@/components/TrialPanel.vue'
 import UnitsPanel from '@/components/UnitsPanel.vue'
 import type { FlightVelocity } from '@/control/drive'
 import type { ScenarioName } from '@shared/sim/generated/command'
@@ -29,9 +30,13 @@ const { phase, phaseDetail, scene, state, log: commandEntries, combatLog: combat
 const brain = useBrain(new BrainClient({ url: brainSocketUrl(BRAIN_PATH) }))
 
 const phaseLabel = computed(() => PHASE_LABELS[phase.value])
-const disabledReason = computed(() =>
-  phase.value === 'open' ? null : '몸(시뮬레이터)과 연결되어야 명령을 보낼 수 있습니다.',
-)
+const TRIAL_RUNNING_REASON = '시험 중입니다. 아래 시험과 점수 칸에서 시험을 멈춘 뒤 쓸 수 있습니다.'
+const disabledReason = computed(() => {
+  if (phase.value !== 'open') {
+    return '몸(시뮬레이터)과 연결되어야 명령을 보낼 수 있습니다.'
+  }
+  return brain.trialsRunning.value ? TRIAL_RUNNING_REASON : null
+})
 /** 사람이 직접 조종할 수 없는 까닭 (몸과 끊김, 또는 두뇌가 조종 중) */
 const manualDisabledReason = computed(() =>
   disabledReason.value ??
@@ -67,7 +72,7 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
           <div>
             <h1>로봇 두뇌 시험장</h1>
             <p class="subtitle">
-              3단계: 날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }}와 두뇌 — 말로 명령하면 느린 뇌(System 2)가 계획을 짜고, 빠른 뇌(System 1)가 날고 쏘고 피합니다
+              날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }}와 두뇌 — 말로 명령하면 느린 뇌(System 2)가 계획을 짜고, 빠른 뇌(System 1)가 날고 쏘고 피합니다. 시험과 점수로 여러 판을 돌려 견줍니다
             </p>
           </div>
           <n-tooltip>
@@ -107,6 +112,10 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
           </aside>
         </main>
         <p v-else-if="phase === 'loading-scene'" class="loading">몸(시뮬레이터)에서 시험장 모양을 받는 중입니다…</p>
+        <section v-if="scene" class="trials" aria-label="시험과 점수">
+          <trial-panel :phase="brain.phase.value" :status="brain.status.value" :scenarios="scene.scenarios"
+                       :error="brain.trialError.value" @start="brain.startTrials" @stop="brain.stopTrials" />
+        </section>
       </div>
     </n-message-provider>
   </n-config-provider>
@@ -166,6 +175,9 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.trials {
+  margin-top: 12px;
 }
 .loading {
   color: #475569;

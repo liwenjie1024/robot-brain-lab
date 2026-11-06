@@ -48,6 +48,7 @@ const KIND_LABELS: Record<DecisionKind, { text: string; type: TagType }> = {
   result: { text: '결과', type: 'success' },
   command: { text: '거절됨', type: 'error' },
   plan: { text: '계획', type: 'info' },
+  trial: { text: '시험', type: 'default' },
 }
 
 const target = ref<string>(AUTO_TARGET)

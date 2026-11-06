@@ -1,4 +1,5 @@
 import Ajv2020 from 'ajv/dist/2020'
+import controlSchema from '../../../contracts/brain/control.schema.json'
 import statusSchema from '../../../contracts/brain/status.schema.json'
 import type { BrainControl } from '@shared/brain/generated/control'
 import type { BrainMessage, BrainStatus, ControlResult, Decision } from '@shared/brain/generated/status'
@@ -27,7 +28,8 @@ export interface BrainClientEvents {
 const DEFAULT_RECONNECT_DELAYS_MS = [1000, 2000, 5000]
 const DEFAULT_REPLY_TIMEOUT_MS = 2000
 const SOCKET_OPEN = 1
-const validateMessage = new Ajv2020({ allErrors: false }).compile<BrainMessage>(statusSchema)
+// 상태 규약은 시험에서 비교할 것(TrialSetup)을 지시 규약에서 가져다 쓴다
+const validateMessage = new Ajv2020({ allErrors: false }).addSchema(controlSchema).compile<BrainMessage>(statusSchema)
 
 export class BrainClient {
   private socket: WebSocket | null = null

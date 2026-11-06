@@ -36,10 +36,13 @@ brain/           두뇌 (TypeScript, Node, :8766). 나중에 휴대폰 React Nat
                  System 1: perception(보이는 것) skills/(기술) reflexes(반사) commander(바뀐 명령만) system1(판단·기록·지표)
                  System 2(system2/): quickOrders(짧은 명령) planCache(기억) model(Ollama) prompt planStream(흘려 받기)
                  planCheck(계획 확인) planRun(단계 넘기기) system2(묻기·다시 묻기·끊기)
-                 brain(둘을 묶음, 사람이 앞섬) server·controls(화면이 붙는 곳, 지시 검증)
-shared/          화면과 두뇌가 함께 쓰는 것: 몸 연결(SimClient), 규약에서 만든 타입(*/generated), 기술·계획 이름(brain/labels), 시험용 값
+                 trials/: trialRunner(판 돌리기) runRecorder(한 판의 결과, 몸이 알린 값으로) trialStats(가운데 값) trialStore(남기기)
+                 brain(둘과 시험을 묶음, 사람이 앞섬) server·controls(화면이 붙는 곳, 지시 검증)
+shared/          화면과 두뇌가 함께 쓰는 것: 몸 연결(SimClient), 규약에서 만든 타입(*/generated), 기술·계획 이름(brain/labels),
+                 시험 점수 셈법(brain/trialScore), 시험용 값(test/fixtures)
 bench/           시험장 화면: Vue 3 + TypeScript + Naive UI + three.js. 3D·사격 광선, 기체 상태·위협, 말로 명령하기·두뇌 칸,
-                 직접 조종·사격, 기록. 몸은 /sim, 두뇌는 /brain으로 개발 서버가 넘겨 준다
+                 직접 조종·사격, 기록, 시험과 점수(아래 넓은 칸). 몸은 /sim, 두뇌는 /brain으로 개발 서버가 넘겨 준다
+results/         두뇌가 남긴 시험 결과(trials/*.json). git에 넣지 않는다
 docs/            구조·기체·시험 장면·잰 값(architecture.md), 기술 스택(tech-stack.md)
 scripts/         로컬 점검(check.ps1)
 ```
@@ -58,6 +61,14 @@ docker compose run --rm sim pytest      # 몸 시험만
 npm run contracts                       # contracts의 JSON Schema를 고친 뒤 TypeScript 타입 다시 만들기
 ```
 
+사람이 화면을 쓰는 동안 시험을 오래 돌리려면 몸·두뇌·화면을 하나 더 띄운다 (시험은 장면을 계속 되돌린다):
+
+```bash
+docker compose run -d --rm --name robot-brain-lab-sim-trials -p 8775:8765 sim
+cd brain && SIM_URL=http://localhost:8775 BRAIN_PORT=8776 node --import tsx src/main.ts
+cd bench && VITE_SIM_TARGET=http://localhost:8775 VITE_BRAIN_TARGET=http://localhost:8776 node ../node_modules/vite/bin/vite.js --port 5181 --strictPort
+```
+
 ## 규칙
 
 - 기술 스택은 `docs/tech-stack.md`가 기준이다. 라이브러리를 추가하거나 바꾸면 그 문서도 고친다.
@@ -70,6 +81,8 @@ npm run contracts                       # contracts의 JSON Schema를 고친 뒤
   두뇌의 피하기가 듣지 않는 것처럼 보인 일이 있었다).
 - 두뇌·화면 개발 서버를 백그라운드로 띄울 때는 npm을 거치지 말고 `node`를 바로 띄운다 (`node --import tsx src/main.ts`,
   `node ../node_modules/vite/bin/vite.js`). npm만 멈추면 아래 프로세스가 남아 포트(8766·5180)를 붙잡는다.
+  `exec node`로 백그라운드에 띄운 두뇌가 출력 없이 종료 코드 127로 꺼진 일이 세 번 있었다 (앞에서 띄우면 재현되지 않음).
+  오래 돌릴 두뇌는 출력과 종료 코드를 로그 파일에 남기게 띄운다 (`node … > 로그 2>&1; echo exit=$? >> 로그`).
 - 규약을 바꾸면 `contracts/*/*.schema.json`을 고치고 `npm run contracts`로 타입을 다시 만든다(`shared/src/*/generated`). 몸은 같은 파일로
   명령을 검증한다 (`robot_sim/commands.py`). 값의 범위는 몸마다 달라 스키마가 아니라 몸이 정해 `/scene`의 limits로 알린다.
   범위 밖 명령은 잘라 쓰지 않고 거절한다 (두뇌의 실수가 드러나게). 몸의 시험 `tests/test_contracts.py`가 실제로 내보내는
@@ -106,6 +119,12 @@ npm run contracts                       # contracts의 JSON Schema를 고친 뒤
   피하기에 none을 골랐다). 시스템 글은 명령마다 같게 둔다 (Ollama가 앞부분 계산을 다시 써 첫 글자가 40~80ms).
 - 사람이 앞선다: 사람이 기술을 직접 고르거나 조종을 가져가면 계획을 그만둔다(`Brain`). 새 명령은 앞 계획과 묻던 요청을 끊고,
   늦게 온 답은 세대 번호로 버린다. 계획을 그만둬도 기체는 지금 기술을 그대로 한다.
-- Ollama는 이 PC의 앱이 쓰는 모델 폴더로 띄운다 (`OLLAMA_MODELS=E:ProgramDataollama`; 기본 폴더는 비어 있다). 두뇌는 15초마다
+- Ollama는 이 PC의 앱이 쓰는 모델 폴더로 띄운다 (`OLLAMA_MODELS=E:\ProgramData\ollama`; 기본 폴더는 비어 있다). 두뇌는 15초마다
   언어 모델을 다시 찾고, 찾으면 GPU에 미리 올린다. 없으면 짧은 명령(공격·물러나·멈춰·자리 지켜)만 따른다.
+- 시험(trials)은 두뇌 밖의 심판처럼 돈다: 장면을 되돌리고(몸이 답한 뒤 처음 온 상태가 판의 시작), 두뇌에게 맡기고, 결과는 두뇌가
+  센 값이 아니라 몸이 알린 값(상태의 체력·드론, 사격 사건)으로 낸다. 몸과 두뇌는 같은 때 맡으면 같은 결과를 내므로(재 보니
+  다섯 판이 똑같음) 판마다 맡는 때를 고르게 늦추고(startSpreadS), 시간·피해는 맡은 때부터 잰다. 견줄 것을 번갈아 돌리고
+  (1판째를 모두 → 2판째, 같은 판 번호는 같은 늦춤), 가운데 값과 범위로 견준다. 시험 중에는 화면의 다른 지시를 거절하고(시험 멈추기만), 다른 곳에서 장면을
+  되돌리거나 몸과 끊기면 시험이 실패한다. 말로 한 명령은 판마다 기억한 계획을 잊고 새로 묻는다.
+- 장면 설명(`/scene`의 scenarios)은 드론 수·반격하는 드론 수를 알린다. 화면·시험은 장면 이름을 몰라도 드론이 없는 장면을 거른다.
 - 사용자의 다른 프로젝트(E:\Workspace\iot)와 섞지 않는다. 그 프로젝트는 마무리되었다.

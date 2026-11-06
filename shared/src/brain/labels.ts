@@ -1,4 +1,4 @@
-import type { Evasion, SkillName } from './generated/control'
+import type { Evasion, SkillName, TrialSetup } from './generated/control'
 import type { PlanStep } from './generated/plan'
 
 /** 두뇌의 판단 기록과 화면이 같은 말을 쓰게 한곳에 둔다 */
@@ -21,6 +21,11 @@ const PERCENT = 100
 
 export function percent(ratio: number): number {
   return Math.round(ratio * PERCENT)
+}
+
+/** 시험에서 비교할 것: "교전 · 피하기" 또는 말로 한 명령 "“드론 2부터 잡아”" */
+export function trialSetupLabel(setup: TrialSetup): string {
+  return setup.kind === 'skill' ? `${SKILL_LABELS[setup.skill]} · ${EVASION_LABELS[setup.evasion]}` : `“${setup.text}”`
 }
 
 /** 계획의 한 단계를 한 줄로: "교전 (표적 드론 2) · 표적 드론 2을(를) 격파할 때까지" */

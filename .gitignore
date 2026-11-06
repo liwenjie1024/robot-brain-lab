@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+
+# 시험 결과 (두뇌가 results/trials에 남긴다)
+/results/

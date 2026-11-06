@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { sceneDescription } from '@shared/test/fixtures'
 import { Brain } from './brain'
 import { applyControl } from './controls'
 import { RecordingSender, ScriptedModel } from './testing'
@@ -6,6 +7,9 @@ import { RecordingSender, ScriptedModel } from './testing'
 function setup() {
   return new Brain(new RecordingSender(), new ScriptedModel(), () => 0)
 }
+
+const SETUP = { kind: 'skill', skill: 'engage', evasion: 'dodge' }
+const TRIALS = JSON.stringify({ type: 'startTrials', scenario: 'skirmish', setups: [SETUP], runs: 10, timeLimitS: 120, startSpreadS: 10 })
 
 describe('applyControl', () => {
   const targets = new Set(['drone-1'])
@@ -65,6 +69,42 @@ describe('applyControl', () => {
 
     expect(result.accepted).toBe(false)
     expect(result.reason).toContain(reason)
+  })
+
+  it('시험을 시작하면 시험 멈추기 말고는 받지 않고, 멈춘 뒤에는 다시 받는다', () => {
+    const brain = setup()
+    brain.setScene(sceneDescription())
+    brain.setSimConnected(true)
+
+    expect(applyControl(TRIALS, brain, targets)).toEqual({ type: 'controlResult', accepted: true })
+    for (const text of ['{"type":"setSkill","skill":"hold"}', '{"type":"order","text":"공격"}', '{"type":"setAutonomy","enabled":false}', TRIALS]) {
+      expect(applyControl(text, brain, targets)).toMatchObject({ accepted: false, reason: '시험 중에는 할 수 없습니다. 시험을 멈춘 뒤 해 주세요' })
+    }
+    expect(applyControl('{"type":"stopTrials"}', brain, targets).accepted).toBe(true)
+    expect(applyControl('{"type":"setSkill","skill":"hold"}', brain, targets).accepted).toBe(true)
+  })
+
+  it.each([
+    ['비교할 것이 없음', { setups: [] }],
+    ['비교할 것 7가지', { setups: Array.from({ length: 7 }, () => SETUP) }],
+    ['0판', { runs: 0 }],
+    ['11판', { runs: 11 }],
+    ['제한 시간 9초', { timeLimitS: 9 }],
+    ['제한 시간 121초', { timeLimitS: 121 }],
+    ['모르는 비교 방법', { setups: [{ kind: 'dance' }] }],
+    ['맡는 때를 앞당김(-1초)', { startSpreadS: -1 }],
+    ['맡는 때를 10초 넘게 늦춤', { startSpreadS: 10.5 }],
+  ])('경계값·실패: 시험 지시가 %s이면 모양이 맞지 않는다고 거절한다', (_, change) => {
+    const brain = setup()
+
+    expect(applyControl(JSON.stringify({ ...JSON.parse(TRIALS), ...change }), brain, targets).reason).toContain('지시 모양이 맞지 않습니다')
+  })
+
+  it('실패: 몸에 연결되지 않았거나 돌고 있는 시험이 없으면 시작·멈추기를 까닭과 함께 거절한다', () => {
+    const brain = setup()
+
+    expect(applyControl(TRIALS, brain, targets).reason).toContain('몸(시뮬레이터)에 연결되어야')
+    expect(applyControl('{"type":"stopTrials"}', brain, targets).reason).toBe('돌고 있는 시험이 없습니다')
   })
 
   it('경계값: 200자 명령은 받는다', () => {

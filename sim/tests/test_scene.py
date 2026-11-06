@@ -48,6 +48,12 @@ def test_publishes_robot_size_scenarios_limits_and_rates(scene):
     assert scene["rates"]["controlHz"] == 50.0
 
 
+def test_scenarios_tell_how_many_drones_and_how_many_shoot_back(scene):
+    """시험 점수는 드론이 있는 장면에서만 낸다: 장면마다 드론 수와 반격하는 드론 수를 알린다"""
+    counts = {scenario["name"]: (scenario["drones"], scenario["armedDrones"]) for scenario in scene["scenarios"]}
+    assert counts == {"empty": (0, 0), "targets": (3, 0), "moving": (3, 0), "skirmish": (3, 3)}
+
+
 @pytest.mark.parametrize("mesh", [-1, 0], ids=["음수", "메시 없음"])
 def test_unknown_mesh_raises(simulation, mesh):
     with pytest.raises(KeyError):

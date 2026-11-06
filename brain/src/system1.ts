@@ -19,8 +19,8 @@ import type { Skill } from './skills/skill'
 const MECHA_ID = 'mecha'
 export const DEFAULT_EVASION: Evasion = 'dodge'
 
-/** 빠른 뇌가 내는 상태 (계획·언어 모델은 느린 뇌가 채운다) */
-export type System1Status = Omit<BrainStatus, 'plan' | 'planner'>
+/** 빠른 뇌가 내는 상태 (계획·언어 모델은 느린 뇌가, 시험은 시험이 채운다) */
+export type System1Status = Omit<BrainStatus, 'plan' | 'planner' | 'trials'>
 
 export function createSkill(name: SkillName, target: string | null): Skill {
   switch (name) {

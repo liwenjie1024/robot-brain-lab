@@ -171,8 +171,8 @@ describe('UnitsPanel', () => {
 
 describe('ScenarioPanel', () => {
   const scenarios = [
-    { name: 'targets', label: '표적 사격', description: '멈춰 떠 있는 드론 3대' },
-    { name: 'skirmish', label: '반격하는 드론', description: '조준 경고 뒤에 쏩니다' },
+    { name: 'targets', label: '표적 사격', description: '멈춰 떠 있는 드론 3대', drones: 3, armedDrones: 0 },
+    { name: 'skirmish', label: '반격하는 드론', description: '조준 경고 뒤에 쏩니다', drones: 3, armedDrones: 3 },
   ]
 
   it('지금 장면을 고른 채로 보여 주고, 처음으로를 누르면 그 장면으로 되돌린다', async () => {

@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, type Ref, ref, shallowRef } from 'vue'
-import type { Evasion, SkillName } from '@shared/brain/generated/control'
+import type { Evasion, SkillName, StartTrials } from '@shared/brain/generated/control'
 import type { BrainStatus, ControlResult, Decision } from '@shared/brain/generated/status'
 import type { BrainClient, BrainPhase } from './brainClient'
 
@@ -12,6 +12,8 @@ export function useBrain(client: BrainClient) {
   const lastError = ref<string | null>(null)
   /** 말로 한 명령·계획 그만두기를 두뇌가 받지 않은 까닭 (명령 칸에 보인다) */
   const orderError = ref<string | null>(null)
+  /** 시험 시작·멈추기를 두뇌가 받지 않은 까닭 (시험 칸에 보인다) */
+  const trialError = ref<string | null>(null)
 
   const unsubscribe = [
     client.on('phase', (value) => {
@@ -48,6 +50,9 @@ export function useBrain(client: BrainClient) {
     decisions,
     lastError,
     orderError,
+    trialError,
+    /** 시험 중 (사람의 직접 조종·장면 되돌리기를 막는다) */
+    trialsRunning: computed(() => phase.value === 'open' && status.value?.trials?.state === 'running'),
     /** 두뇌가 몸을 조종하고 있음 (사람의 직접 조종을 막는다) */
     driving: computed(() => phase.value === 'open' && status.value?.autonomy === true),
     setAutonomy: (enabled: boolean) => apply(client.send({ type: 'setAutonomy', enabled })),
@@ -55,6 +60,8 @@ export function useBrain(client: BrainClient) {
       apply(client.send(target ? { type: 'setSkill', skill, target, evasion } : { type: 'setSkill', skill, evasion })),
     order: (text: string) => apply(client.send({ type: 'order', text }), orderError),
     cancelPlan: () => apply(client.send({ type: 'cancelPlan' }), orderError),
+    startTrials: (spec: Omit<StartTrials, 'type' | 'id'>) => apply(client.send({ type: 'startTrials', ...spec }), trialError),
+    stopTrials: () => apply(client.send({ type: 'stopTrials' }), trialError),
     retry: () => client.retry(),
   }
 }

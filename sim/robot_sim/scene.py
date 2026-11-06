@@ -73,7 +73,13 @@ def describe(model: mujoco.MjModel, units: Units, limits: CommandLimits, rates: 
             {"id": unit.id, "kind": unit.kind, "name": unit.name, "body": unit.body} for unit in units.all.values()
         ],
         "scenarios": [
-            {"name": scenario.name, "label": scenario.label, "description": scenario.description}
+            {
+                "name": scenario.name,
+                "label": scenario.label,
+                "description": scenario.description,
+                "drones": len(scenario.drones),
+                "armedDrones": sum(plan.armed for plan in scenario.drones),
+            }
             for scenario in SCENARIOS.values()
         ],
         "limits": limits.as_dict(),

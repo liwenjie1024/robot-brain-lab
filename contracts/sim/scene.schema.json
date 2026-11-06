@@ -92,9 +92,11 @@
       "properties": {
         "name": { "type": "string" },
         "label": { "type": "string" },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "drones": { "description": "이 장면에서 쓰는 드론 수 (0이면 드론 없이 날기만)", "type": "integer", "minimum": 0 },
+        "armedDrones": { "description": "그 가운데 반격하는(쏘는) 드론 수", "type": "integer", "minimum": 0 }
       },
-      "required": ["name", "label", "description"],
+      "required": ["name", "label", "description", "drones", "armedDrones"],
       "additionalProperties": false
     },
     "Geom": {

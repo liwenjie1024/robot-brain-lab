@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { sceneDescription } from '@shared/test/fixtures'
 import { Brain } from './brain'
-import { drone, mechaStatus, RecordingSender, ScriptedModel, stateMessage } from './testing'
+import { drone, mechaStatus, RecordingSender, ScriptedModel, settle, stateMessage } from './testing'
 
 function setup() {
   const sender = new RecordingSender()
@@ -48,5 +49,27 @@ describe('Brain', () => {
     brain.setAutonomy(true)
 
     expect(brain.status()).toMatchObject({ autonomy: true, plan: { state: 'cancelled' } })
+  })
+
+  it('시험은 장면을 되돌린 뒤 첫 상태에서 두뇌에게 기술을 맡기고, 판의 시작·끝을 판단 기록에 남긴다', async () => {
+    const { brain, sender } = setup()
+    brain.setScene(sceneDescription())
+    brain.onState(STATE)
+
+    expect(brain.startTrials({ type: 'startTrials', scenario: 'skirmish', setups: [{ kind: 'skill', skill: 'engage', evasion: 'guard' }], runs: 1, timeLimitS: 60, startSpreadS: 0 })).toBeNull()
+    await settle()
+    brain.onState({ ...STATE, simTime: 0.02, scenario: 'skirmish' })
+    brain.onState({ ...STATE, simTime: 20, scenario: 'skirmish', units: [drone({ id: 'drone-1', alive: false })] })
+    await settle()
+
+    expect(sender.sent).toContainEqual({ type: 'reset', scenario: 'skirmish' })
+    expect(brain.status()).toMatchObject({ autonomy: false, skill: { name: 'engage', evasion: 'guard' }, trials: { state: 'done', setups: [{ summary: { cleared: 1 } }] } })
+    const trialNotes = brain.log.recent().filter((decision) => decision.kind === 'trial').map((decision) => decision.text)
+    expect(trialNotes).toEqual([
+      '시험 시작: 반격하는 드론, 1가지 × 1판 (한 판 60초까지)',
+      '시험 1판째: 교전 · 방패로 막기',
+      expect.stringMatching(/^시험 1판째 끝: 교전 · 방패로 막기 — 다 격파 \(20초, 피해 0, 점수 \d+/),
+      '시험 끝 (다 돌림, 1판)',
+    ])
   })
 })
