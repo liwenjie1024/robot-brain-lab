@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { NAlert, NButton, NCard, NEmpty, NInput, NSpin, NTag, NTooltip } from 'naive-ui'
+import { NAlert, NButton, NCard, NDropdown, NInput, NSpin, NTag, NTooltip } from 'naive-ui'
 import { computed, ref } from 'vue'
 import type { BrainStatus, PlanStatus, PlanStepView } from '@shared/brain/generated/status'
 import { describeStep, EVASION_LABELS, percent } from '@shared/brain/labels'
 import type { BrainPhase } from '@/brain/brainClient'
 import type { TagType } from '@/utils/labels'
+import HelpTip from './HelpTip.vue'
 
 /**
  * 말로 명령하는 칸: 느린 뇌(System 2)가 명령을 계획(기술 단계)으로 바꾸고 빠른 뇌가 따른다.
@@ -29,6 +30,9 @@ const MS_PER_SECOND = 1000
 /** 두뇌가 언어 모델 없이 바로 알아듣는 말 */
 const QUICK_ORDERS = ['공격', '물러나', '멈춰', '자리 지켜']
 const EXAMPLES = ['드론 2부터 잡고 나머지도 정리해. 위험하면 물러나', '방패로 막으면서 전부 격파해', '10초 동안 자리 지키다가 공격해']
+const EXAMPLE_OPTIONS = EXAMPLES.map((example) => ({ label: example, key: example }))
+const ORDER_HELP = '느린 뇌(System 2)가 말로 한 명령을 계획으로 바꿉니다. 명령하면 두뇌가 조종을 맡습니다. "바로 하기"의 짧은 명령은 바로, 그 밖의 명령은 언어 모델이 계획을 짜는 데 보통 1~3초 걸립니다. 그동안에도 빠른 뇌는 조준 경고를 피하고 막습니다.'
+const CANCEL_HELP = '그만두면 기체는 지금 하는 기술을 그대로 합니다.'
 
 const STATE_LABELS: Record<PlanStatus['state'], { text: string; type: TagType }> = {
   thinking: { text: '짜는 중', type: 'info' },
@@ -93,7 +97,11 @@ function seconds(ms: number): string {
 </script>
 
 <template>
-  <n-card title="말로 명령하기 (느린 뇌 System 2)" size="small">
+  <n-card size="small" class="order">
+    <template #header>
+      말로 명령하기 (느린 뇌)
+      <help-tip :text="ORDER_HELP" />
+    </template>
     <template v-if="planner && connected" #header-extra>
       <n-tooltip>
         <template #trigger>
@@ -106,40 +114,32 @@ function seconds(ms: number): string {
     </template>
 
     <p v-if="!connected" class="hint" data-test="order-offline">
-      두뇌가 연결되면 말로 명령할 수 있습니다. 두뇌를 띄우는 방법은 아래 두뇌 칸에 있습니다.
+      두뇌가 연결되면 말로 명령할 수 있습니다. 두뇌를 띄우는 방법은 두뇌 칸에 있습니다.
     </p>
 
     <template v-else-if="status">
       <n-alert v-if="planner && !planner.available" type="warning" :show-icon="false" class="notice" data-test="planner-off">
-        언어 모델({{ planner.model }})을 쓸 수 없어 아래 "바로 하기"의 짧은 명령만 알아듣습니다.
-        Ollama를 띄우면 15초 안에 다시 붙습니다.
+        언어 모델({{ planner.model }})을 쓸 수 없어 "바로 하기"의 짧은 명령만 알아듣습니다. Ollama를 띄우면 15초 안에 다시 붙습니다.
       </n-alert>
 
-      <form class="order" @submit.prevent="submit">
-        <n-input v-model:value="text" :maxlength="MAX_ORDER_LENGTH" show-count clearable size="small"
-                 placeholder="예: 드론 2부터 잡고 나머지도 정리해" aria-label="명령" data-test="order-input" />
+      <form class="line" @submit.prevent="submit">
+        <n-input v-model:value="text" class="grow" :maxlength="MAX_ORDER_LENGTH" clearable size="small"
+                 placeholder="예: 드론 2부터 잡고 나머지도 정리해" aria-label="명령 (200자까지)" data-test="order-input" />
+        <n-dropdown :options="EXAMPLE_OPTIONS" trigger="click" @select="(example: string) => (text = example)">
+          <n-button size="small" quaternary data-test="order-examples">예 ▾</n-button>
+        </n-dropdown>
         <n-button attr-type="submit" type="primary" size="small" :disabled="!text.trim()" data-test="order-send">명령하기</n-button>
       </form>
-      <p class="hint">
-        명령하면 두뇌가 조종을 맡습니다. 언어 모델이 계획을 짜는 데 보통 1~3초 걸리고, 그동안에도 빠른 뇌는 조준 경고를 피하고 막습니다.
-      </p>
-
-      <div class="row">
+      <div class="line quick">
         <span class="label">바로 하기</span>
         <n-button v-for="word in QUICK_ORDERS" :key="word" size="tiny" secondary :data-test="`quick-${word}`" @click="send(word)">
           {{ word }}
         </n-button>
       </div>
-      <div class="row">
-        <span class="label">예 (누르면 칸에 들어감)</span>
-        <n-button v-for="example in EXAMPLES" :key="example" text size="tiny" class="example" @click="text = example">
-          {{ example }}
-        </n-button>
-      </div>
 
       <n-alert v-if="error" type="error" :show-icon="false" class="notice" data-test="order-error">{{ error }}</n-alert>
 
-      <n-empty v-if="!plan" description="아직 명령이 없습니다" size="small" data-test="plan-empty" />
+      <p v-if="!plan" class="empty" data-test="plan-empty">아직 명령이 없습니다. 위에 말로 명령하거나 "바로 하기"를 누르세요.</p>
       <section v-else class="plan" aria-label="지금 계획" data-test="plan">
         <div class="plan-head">
           <n-tag :type="STATE_LABELS[plan.state].type" size="small" data-test="plan-state">{{ STATE_LABELS[plan.state].text }}</n-tag>
@@ -150,15 +150,21 @@ function seconds(ms: number): string {
             {{ SOURCE_LABELS[plan.source].help }}
           </n-tooltip>
           <span class="order-text">“{{ plan.order }}”</span>
+          <n-tooltip v-if="active">
+            <template #trigger>
+              <n-button size="tiny" class="cancel" data-test="plan-cancel" @click="emit('cancelPlan')">계획 그만두기</n-button>
+            </template>
+            {{ CANCEL_HELP }}
+          </n-tooltip>
         </div>
         <p class="say" data-test="plan-say">
-          <n-spin v-if="plan.state === 'thinking'" :size="14" />
+          <n-spin v-if="plan.state === 'thinking'" :size="12" />
           {{ plan.say }}
         </p>
         <ol v-if="plan.steps.length" class="steps" data-test="plan-steps">
           <li v-for="(step, index) in plan.steps" :key="index" :class="step.state">
             <span class="mark">{{ STEP_LABELS[step.state] }}</span>
-            <span>{{ index + 1 }}. {{ describeStep(step, nameOf) }} <span class="muted">· 조준 경고에는 {{ EVASION_LABELS[step.evasion] }}</span></span>
+            <span>{{ index + 1 }}. {{ describeStep(step, nameOf) }} <span class="muted">· 경고에 {{ EVASION_LABELS[step.evasion] }}</span></span>
           </li>
         </ol>
         <p v-if="plan.retreatBelowHp > 0" class="muted" data-test="plan-retreat">
@@ -169,10 +175,6 @@ function seconds(ms: number): string {
           <p class="error-text">{{ plan.error }}</p>
           <n-button size="tiny" data-test="plan-retry" @click="send(plan.order)">같은 명령 다시 하기</n-button>
         </n-alert>
-        <div v-if="active" class="row">
-          <n-button size="small" data-test="plan-cancel" @click="emit('cancelPlan')">계획 그만두기</n-button>
-          <span class="muted">그만두면 기체는 지금 하는 기술을 그대로 합니다.</span>
-        </div>
       </section>
     </template>
 
@@ -182,35 +184,39 @@ function seconds(ms: number): string {
 
 <style scoped>
 .hint {
-  margin: 6px 0 10px;
+  margin: 0;
   color: #64748b;
   font-size: 12px;
 }
 .notice {
-  margin-bottom: 8px;
+  margin: 4px 0;
+  font-size: 12px;
 }
-.order {
-  display: flex;
-  gap: 6px;
-}
-.row {
+.line {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0;
+  gap: 4px;
+}
+.grow {
+  flex: 1 1 12em;
+  width: auto;
+}
+.quick {
+  margin-top: 4px;
 }
 .label {
   font-size: 12px;
   color: #475569;
 }
-.example {
+.empty {
+  margin: 6px 0 0;
+  color: #94a3b8;
   font-size: 12px;
-  text-decoration: underline;
 }
 .plan {
-  margin-top: 10px;
-  padding: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
   border-radius: 6px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
@@ -219,29 +225,34 @@ function seconds(ms: number): string {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .order-text {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
 }
 .say {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 8px 0;
-  font-size: 13px;
+  margin: 4px 0;
+  font-size: 12px;
 }
 .steps {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   padding: 0;
   list-style: none;
   font-size: 12px;
 }
 .steps li {
   display: flex;
-  gap: 8px;
-  padding: 3px 0;
+  gap: 6px;
+  padding: 1px 0;
 }
 .steps li.running {
   font-weight: 600;
@@ -250,14 +261,15 @@ function seconds(ms: number): string {
   color: #64748b;
 }
 .mark {
-  min-width: 5em;
+  min-width: 4.8em;
+  flex: none;
 }
 .muted {
-  margin: 4px 0;
+  margin: 2px 0;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
 }
 .error-text {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 </style>

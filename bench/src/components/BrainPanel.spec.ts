@@ -1,12 +1,12 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import type { BrainStatus, Decision } from '@shared/brain/generated/status'
+import type { BrainStatus } from '@shared/brain/generated/status'
 import { brainStatus, drone } from '@shared/test/fixtures'
 import BrainPanel from './BrainPanel.vue'
 
-function panel(props: Partial<{ phase: 'connecting' | 'open' | 'offline'; status: BrainStatus | null; decisions: Decision[]; lastError: string | null }> = {}) {
+function panel(props: Partial<{ phase: 'connecting' | 'open' | 'offline'; status: BrainStatus | null; lastError: string | null }> = {}) {
   return mount(BrainPanel, {
-    props: { phase: 'open', status: brainStatus(), decisions: [], lastError: null, units: [drone(), drone({ id: 'drone-2', name: '표적 드론 2' })], ...props },
+    props: { phase: 'open', status: brainStatus(), lastError: null, units: [drone(), drone({ id: 'drone-2', name: '표적 드론 2' })], ...props },
   })
 }
 
@@ -51,10 +51,10 @@ describe('BrainPanel', () => {
     expect(panel({ lastError: '그런 표적이 없습니다: drone-9' }).get('[data-test="brain-error"]').text()).toContain('drone-9')
   })
 
-  it('판단 기록을 종류와 함께 보여 주고, 없으면 빈 상태를 알린다', () => {
-    const decisions: Decision[] = [{ type: 'decision', seq: 2, simTime: 4.2, kind: 'reflex', text: '표적 드론 2이(가) 조준함 → 피하기' }]
+  it('긴 설명은 칸을 차지하지 않게 도움말(?)에 두고, 화면 읽기 프로그램은 같은 설명을 읽는다', () => {
+    const help = panel().find('[aria-label^="도움말: 켜면 두뇌가 비행·사격·방패 명령을 보내고"]')
 
-    expect(panel({ decisions }).get('[data-test="decisions"]').text()).toContain('반사')
-    expect(panel().text()).toContain('아직 판단 기록이 없습니다')
+    expect(help.exists()).toBe(true)
+    expect(help.attributes('tabindex')).toBe('0')
   })
 })

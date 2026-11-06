@@ -115,6 +115,15 @@ describe('FlightPanel', () => {
     wrapper.unmount()
   })
 
+  it('이 칸이 보이지 않을 때(keyboard=false)는 키보드로 조종하지 않는다', () => {
+    const wrapper = mount(FlightPanel, { props: { limits: LIMITS, heading: 0, disabledReason: null, destroyed: false, keyboard: false } })
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' }))
+
+    expect(wrapper.emitted('fly')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('밀기는 기체 기준 방향의 힘(N)과 시간을 낸다', async () => {
     const wrapper = flightPanel()
 
@@ -130,8 +139,9 @@ describe('UnitsPanel', () => {
     const wrapper = mount(UnitsPanel, { props: { state: stateMessage(), disabledReason: null } })
 
     expect(wrapper.get('[data-test="drones"]').text()).toContain('표적 드론 1')
-    expect(wrapper.get('[data-test="drones"]').text()).toContain('살아 있음')
+    expect(wrapper.get('[data-test="drones"]').text()).toContain('체력 60')
     expect(wrapper.get('[data-test="drones"]').text()).toContain('150 m')
+    expect(wrapper.get('[data-test="guard-drone-1"]').attributes('aria-label')).toBe('표적 드론 1 쪽으로 방패 들기')
     await wrapper.get('[data-test="aim-drone-1"]').trigger('click')
     await wrapper.get('[data-test="guard-drone-1"]').trigger('click')
     await wrapper.get('[data-test="fire"]').trigger('click')
@@ -151,6 +161,7 @@ describe('UnitsPanel', () => {
 
     expect(wrapper.get('[data-test="drone-threat"]').text()).toContain('조준 중 · 0.8초')
     expect(wrapper.get('[data-test="aim-drone-2"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('[data-test="drones"] li')[1]?.text()).toContain('파괴됨')
   })
 
   it('실패: 기체가 파괴되면 쏘기·겨누기를 막는다', () => {

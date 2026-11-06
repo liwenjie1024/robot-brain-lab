@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { dateKoKR, koKR, NAlert, NButton, NConfigProvider, NMessageProvider, NTag, NTooltip } from 'naive-ui'
-import { computed } from 'vue'
+import { dateKoKR, koKR, NAlert, NButton, NConfigProvider, NMessageProvider, NRadioButton, NRadioGroup, NTag, NTooltip } from 'naive-ui'
+import { computed, ref } from 'vue'
 import { BrainClient, brainSocketUrl } from '@/brain/brainClient'
 import { useBrain } from '@/brain/useBrain'
 import BrainPanel from '@/components/BrainPanel.vue'
-import CombatLog from '@/components/CombatLog.vue'
-import CommandLog from '@/components/CommandLog.vue'
 import FlightPanel from '@/components/FlightPanel.vue'
+import HelpTip from '@/components/HelpTip.vue'
+import LogPanel from '@/components/LogPanel.vue'
 import MechaPanel from '@/components/MechaPanel.vue'
 import OrderPanel from '@/components/OrderPanel.vue'
 import RobotView from '@/components/RobotView.vue'
@@ -29,8 +29,14 @@ const { phase, phaseDetail, scene, state, log: commandEntries, combatLog: combat
 
 const brain = useBrain(new BrainClient({ url: brainSocketUrl(BRAIN_PATH) }))
 
+/** 조종은 한 화면에 다 보이게(넘기지 않게) 3D·기체 상태 | 두뇌 | 직접 조종 | 기록으로 나누고, 시험과 점수는 따로 본다 */
+type View = 'control' | 'trials'
+const view = ref<View>('control')
+const ABOUT =
+  '날고 무장한 시험 기체와 두뇌를 시험합니다. 말로 명령하면 느린 뇌(System 2)가 계획을 짜고, 빠른 뇌(System 1)가 날고 쏘고 피합니다. "시험과 점수"에서 여러 판을 돌려 견줍니다.'
+const TRIAL_RUNNING_REASON = '시험 중입니다. 위의 "시험과 점수"에서 시험을 멈춘 뒤 쓸 수 있습니다.'
+
 const phaseLabel = computed(() => PHASE_LABELS[phase.value])
-const TRIAL_RUNNING_REASON = '시험 중입니다. 아래 시험과 점수 칸에서 시험을 멈춘 뒤 쓸 수 있습니다.'
 const disabledReason = computed(() => {
   if (phase.value !== 'open') {
     return '몸(시뮬레이터)과 연결되어야 명령을 보낼 수 있습니다.'
@@ -67,61 +73,71 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
 <template>
   <n-config-provider :locale="koKR" :date-locale="dateKoKR">
     <n-message-provider>
-      <div class="page">
+      <div class="app">
         <header class="header">
-          <div>
-            <h1>로봇 두뇌 시험장</h1>
-            <p class="subtitle">
-              날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }}와 두뇌 — 말로 명령하면 느린 뇌(System 2)가 계획을 짜고, 빠른 뇌(System 1)가 날고 쏘고 피합니다. 시험과 점수로 여러 판을 돌려 견줍니다
-            </p>
-          </div>
+          <h1>로봇 두뇌 시험장</h1>
+          <span class="robot">{{ scene?.robot.name ?? '' }}</span>
+          <help-tip :text="ABOUT" />
+          <n-radio-group v-model:value="view" size="small" class="views" aria-label="보기" data-test="view">
+            <n-radio-button value="control" data-test="view-control">조종</n-radio-button>
+            <n-radio-button value="trials" data-test="view-trials">
+              시험과 점수<template v-if="brain.trialsRunning.value"> · 시험 중</template>
+            </n-radio-button>
+          </n-radio-group>
           <n-tooltip>
             <template #trigger>
-              <n-tag :type="phaseLabel.type" data-test="phase" round>{{ phaseLabel.text }}</n-tag>
+              <n-tag :type="phaseLabel.type" data-test="phase" round size="small">몸: {{ phaseLabel.text }}</n-tag>
             </template>
             {{ phaseLabel.help }}
           </n-tooltip>
         </header>
 
         <n-alert v-if="phase === 'failed'" type="error" title="몸(시뮬레이터)에 연결하지 못했습니다" class="banner">
-          <p>{{ phaseDetail }}</p>
-          <p class="muted">저장소 맨 위에서 <code>docker compose up -d sim</code> 으로 띄울 수 있습니다.</p>
-          <n-button type="primary" data-test="retry" @click="sim.retry">다시 시도</n-button>
+          {{ phaseDetail }} 저장소 맨 위에서 <code>docker compose up -d sim</code> 으로 띄울 수 있습니다.
+          <n-button type="primary" size="small" data-test="retry" @click="sim.retry">다시 시도</n-button>
         </n-alert>
         <n-alert v-else-if="phase === 'reconnecting'" type="warning" class="banner">{{ phaseDetail }}</n-alert>
 
-        <main v-if="scene" class="layout">
-          <section class="view" aria-label="3D 화면">
-            <robot-view :client="client" :scene="scene" />
-          </section>
-          <aside class="side">
+        <main v-if="scene" class="workspace" :class="view" data-test="workspace">
+          <section class="view-col" aria-label="3D 화면과 기체 상태">
+            <div class="view">
+              <robot-view :client="client" :scene="scene" />
+            </div>
             <mecha-panel :state="state" :names="names" :stale="phase !== 'open'" />
+          </section>
+
+          <section v-show="view === 'control'" class="col brain-col" aria-label="두뇌">
             <order-panel :phase="brain.phase.value" :status="brain.status.value" :error="brain.orderError.value" :names="names"
                          @order="brain.order" @cancel-plan="brain.cancelPlan" />
-            <brain-panel :phase="brain.phase.value" :status="brain.status.value" :decisions="brain.decisions.value"
-                         :last-error="brain.lastError.value" :units="state?.units ?? []" @set-autonomy="brain.setAutonomy"
-                         @set-skill="brain.setSkill" @retry="brain.retry" />
-            <units-panel :state="state" :disabled-reason="manualDisabledReason" @aim="aim" @guard="guard" @fire="fire"
-                         @lower-aim="lowerAim" @lower-guard="lowerGuard" />
+            <brain-panel :phase="brain.phase.value" :status="brain.status.value" :last-error="brain.lastError.value"
+                         :units="state?.units ?? []" @set-autonomy="brain.setAutonomy" @set-skill="brain.setSkill" @retry="brain.retry" />
+          </section>
+          <section v-show="view === 'control'" class="col manual-col" aria-label="직접 조종">
             <scenario-panel :scenarios="scene.scenarios" :current="state?.scenario ?? null"
                             :disabled-reason="disabledReason" @reset="reset" />
             <flight-panel :limits="scene.limits" :heading="state?.mecha.heading ?? 0" :disabled-reason="manualDisabledReason"
-                          :destroyed="state?.mecha.mode === 'destroyed'" @fly="fly" @push="push" @fire="fire" />
-            <combat-log :entries="combatEntries" :names="names" />
-            <command-log :entries="commandEntries" />
-          </aside>
+                          :destroyed="state?.mecha.mode === 'destroyed'" :keyboard="view === 'control'" @fly="fly" @push="push"
+                          @fire="fire" />
+            <units-panel :state="state" :disabled-reason="manualDisabledReason" @aim="aim" @guard="guard" @fire="fire"
+                         @lower-aim="lowerAim" @lower-guard="lowerGuard" />
+          </section>
+          <section v-show="view === 'control'" class="logs-col" aria-label="기록">
+            <log-panel :decisions="brain.decisions.value" :combat="combatEntries" :commands="commandEntries" :names="names" />
+          </section>
+
+          <section v-show="view === 'trials'" class="trials-col" aria-label="시험과 점수">
+            <trial-panel :phase="brain.phase.value" :status="brain.status.value" :scenarios="scene.scenarios"
+                         :error="brain.trialError.value" @start="brain.startTrials" @stop="brain.stopTrials" />
+          </section>
         </main>
         <p v-else-if="phase === 'loading-scene'" class="loading">몸(시뮬레이터)에서 시험장 모양을 받는 중입니다…</p>
-        <section v-if="scene" class="trials" aria-label="시험과 점수">
-          <trial-panel :phase="brain.phase.value" :status="brain.status.value" :scenarios="scene.scenarios"
-                       :error="brain.trialError.value" @start="brain.startTrials" @stop="brain.stopTrials" />
-        </section>
       </div>
     </n-message-provider>
   </n-config-provider>
 </template>
 
 <style>
+html,
 body {
   margin: 0;
   font-family: system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif;
@@ -131,64 +147,119 @@ body {
 </style>
 
 <style scoped>
-.page {
-  max-width: 1700px;
-  margin: 0 auto;
-  padding: 16px;
+/* 한 화면에 다 보이게: 페이지는 넘기지 않고, 칸이 모자라면 그 칸 안에서만 넘긴다 */
+.app {
+  box-sizing: border-box;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  overflow: hidden;
 }
 .header {
+  flex: none;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
+  white-space: nowrap;
 }
-.subtitle {
-  margin: 4px 0 0;
+.robot {
   color: #475569;
   font-size: 13px;
 }
+.views {
+  margin-left: auto;
+}
 .banner {
-  margin-bottom: 12px;
+  flex: none;
 }
-.muted {
-  color: #64748b;
-  font-size: 12px;
-}
-.layout {
+.workspace {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 400px;
-  gap: 12px;
-  align-items: start;
+  gap: 8px;
+  grid-template-rows: minmax(0, 1fr);
 }
-.view {
-  position: sticky;
-  top: 12px;
-  height: calc(100vh - 120px);
-  min-height: 420px;
+.workspace.control {
+  grid-template-columns: minmax(320px, 1.1fr) minmax(360px, 1.15fr) minmax(330px, 1fr) minmax(260px, 0.8fr);
+  grid-template-areas: 'view brain manual logs';
 }
-.side {
+.workspace.trials {
+  grid-template-columns: minmax(300px, 0.75fr) minmax(0, 2.5fr);
+  grid-template-areas: 'view trials';
+}
+.view-col {
+  grid-area: view;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
-.trials {
-  margin-top: 12px;
+.view {
+  flex: 1;
+  min-height: 200px;
+}
+.col {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.brain-col {
+  grid-area: brain;
+}
+.manual-col {
+  grid-area: manual;
+}
+.logs-col {
+  grid-area: logs;
+  min-height: 0;
+}
+.trials-col {
+  grid-area: trials;
+  min-height: 0;
 }
 .loading {
   color: #475569;
 }
-@media (max-width: 900px) {
-  .layout {
+/* 네 칸의 가장 작은 너비(약 1320px)가 들어가지 않으면 기록을 3D 아래로 내린다 */
+@media (max-width: 1319px) {
+  .workspace.control {
+    grid-template-columns: minmax(340px, 1.15fr) minmax(320px, 1fr) minmax(320px, 1fr);
+    grid-template-rows: minmax(0, 1fr) 160px;
+    grid-template-areas:
+      'view brain manual'
+      'logs brain manual';
+  }
+}
+/* 태블릿·휴대폰: 한 줄로 쌓고 페이지를 넘긴다 */
+@media (max-width: 1099px) {
+  .app {
+    height: auto;
+    overflow: visible;
+  }
+  .workspace.control,
+  .workspace.trials {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-template-areas: 'view' 'brain' 'manual' 'logs' 'trials';
   }
   .view {
-    position: static;
-    height: 60vh;
+    height: 50vh;
+    flex: none;
+  }
+  .col {
+    overflow: visible;
+  }
+  .logs-col {
+    height: 50vh;
   }
 }
 </style>

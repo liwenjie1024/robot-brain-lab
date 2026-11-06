@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NCard, NEmpty, NTag } from 'naive-ui'
+import { NEmpty, NTag } from 'naive-ui'
 import type { CombatLogEntry } from '@/sim/useSim'
 import { describeCombatEvent } from '@/utils/combatLog'
 
@@ -10,17 +10,15 @@ const timeFormat = new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '
 </script>
 
 <template>
-  <n-card title="전투 기록" size="small">
-    <n-empty v-if="entries.length === 0" description="아직 사격이 없습니다" />
-    <ol v-else class="log" data-test="combat-log">
-      <li v-for="entry in entries" :key="entry.key">
-        <span class="time">{{ timeFormat.format(entry.at) }}</span>
-        <n-tag :type="describeCombatEvent(entry.event, names).type" size="small">
-          {{ describeCombatEvent(entry.event, names).text }}
-        </n-tag>
-      </li>
-    </ol>
-  </n-card>
+  <n-empty v-if="entries.length === 0" description="아직 사격이 없습니다" size="small" />
+  <ol v-else class="log" data-test="combat-log">
+    <li v-for="entry in entries" :key="entry.key">
+      <span class="time">{{ timeFormat.format(entry.at) }}</span>
+      <n-tag :type="describeCombatEvent(entry.event, names).type" size="small">
+        {{ describeCombatEvent(entry.event, names).text }}
+      </n-tag>
+    </li>
+  </ol>
 </template>
 
 <style scoped>
@@ -28,7 +26,7 @@ const timeFormat = new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 13px;
+  font-size: 12px;
 }
 .log li {
   display: flex;

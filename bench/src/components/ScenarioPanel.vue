@@ -2,6 +2,7 @@
 import { NButton, NCard, NSelect } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 import type { ScenarioInfo } from '@shared/sim/generated/scene'
+import HelpTip from './HelpTip.vue'
 
 /** 시험 장면 고르기와 처음으로 되돌리기 */
 const props = defineProps<{
@@ -28,26 +29,43 @@ const description = computed(() => props.scenarios.find((scenario) => scenario.n
 </script>
 
 <template>
-  <n-card title="시험 장면" size="small">
-    <label class="label" for="scenario">장면</label>
-    <n-select id="scenario" v-model:value="chosen" :options="options" data-test="scenario" />
+  <n-card size="small" class="scenario">
+    <template #header>
+      시험 장면
+      <help-tip text="처음으로를 누르면 기체를 시작 자리에 세우고 드론·체력·에너지를 처음으로 돌립니다." />
+    </template>
+    <div class="row">
+      <label class="sr-only" for="scenario">장면</label>
+      <n-select id="scenario" v-model:value="chosen" :options="options" size="small" data-test="scenario" />
+      <n-button type="primary" size="small" data-test="reset" :disabled="!!disabledReason" @click="emit('reset', chosen)">
+        {{ chosen === current ? '처음으로' : '이 장면으로 처음부터' }}
+      </n-button>
+    </div>
     <p class="hint">{{ description }}</p>
-    <n-button type="primary" block data-test="reset" :disabled="!!disabledReason" @click="emit('reset', chosen)">
-      {{ chosen === current ? '처음으로' : '이 장면으로 처음부터' }}
-    </n-button>
-    <p class="hint">기체를 시작 자리에 세우고 드론·체력·에너지를 처음으로 돌립니다.</p>
+    <p v-if="disabledReason" class="reason">{{ disabledReason }}</p>
   </n-card>
 </template>
 
 <style scoped>
-.label {
-  display: block;
-  font-size: 13px;
-  margin-bottom: 4px;
+.row {
+  display: flex;
+  gap: 6px;
 }
 .hint {
-  margin: 6px 0 10px;
+  margin: 4px 0 0;
   color: #64748b;
   font-size: 12px;
+}
+.reason {
+  margin: 4px 0 0;
+  color: #b45309;
+  font-size: 12px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 </style>

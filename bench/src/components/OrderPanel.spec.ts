@@ -68,7 +68,7 @@ describe('OrderPanel', () => {
     const steps = wrapper.findAll('[data-test="plan-steps"] li').map((item) => item.text())
     expect(steps[0]).toContain('▶ 하는 중')
     expect(steps[0]).toContain('1. 교전 (표적 드론 2) · 표적 드론 2을(를) 격파할 때까지')
-    expect(steps[0]).toContain('조준 경고에는 피하기')
+    expect(steps[0]).toContain('경고에 피하기')
     expect(steps[1]).toContain('· 기다림')
     expect(wrapper.get('[data-test="plan-retreat"]').text()).toContain('30% 아래')
     expect(wrapper.get('[data-test="plan-timing"]').text()).toBe('첫 글자 0.1초 · 첫 단계 시작 1.5초 · 계획 전체 3.0초 · 언어 모델에 1번 물음')
