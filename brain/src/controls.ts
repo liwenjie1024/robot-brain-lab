@@ -2,15 +2,16 @@ import Ajv2020 from 'ajv/dist/2020'
 import controlSchema from '../../contracts/brain/control.schema.json'
 import type { BrainControl } from '@shared/brain/generated/control'
 import type { ControlResult } from '@shared/brain/generated/status'
-import type { System1 } from './system1'
+import type { Brain } from './brain'
 
 const validateControl = new Ajv2020({ allErrors: false }).compile<BrainControl>(controlSchema)
 
 /**
- * 화면(나중에는 느린 뇌)이 보낸 지시를 경계에서 확인하고 적용한다. 받을 수 없으면 까닭을 붙여 거절한다.
+ * 화면이 보낸 지시를 경계에서 확인하고 적용한다. 받을 수 없으면 까닭을 붙여 거절한다.
  * knownTargets는 지금 장면의 드론 (모르면 비어 있고, 그때는 표적을 확인하지 않는다).
+ * 말로 한 명령(order)은 받았다고 바로 답하고, 계획을 짜는 과정은 두뇌의 상태와 판단 기록으로 알린다.
  */
-export function applyControl(text: string, system1: System1, knownTargets: ReadonlySet<string>): ControlResult {
+export function applyControl(text: string, brain: Brain, knownTargets: ReadonlySet<string>): ControlResult {
   let message: unknown
   try {
     message = JSON.parse(text)
@@ -32,10 +33,18 @@ export function applyControl(text: string, system1: System1, knownTargets: Reado
       if (message.target && knownTargets.size > 0 && !knownTargets.has(message.target)) {
         return result(false, `그런 표적이 없습니다: ${message.target}`)
       }
-      system1.setSkill(message.skill, message.target ?? null, message.evasion)
+      brain.chooseSkill(message.skill, message.target ?? null, message.evasion)
       return result(true)
     case 'setAutonomy':
-      system1.setAutonomy(message.enabled)
+      brain.setAutonomy(message.enabled)
       return result(true)
+    case 'order':
+      if (!message.text.trim()) {
+        return result(false, '명령이 비어 있습니다')
+      }
+      void brain.order(message.text)
+      return result(true)
+    case 'cancelPlan':
+      return brain.cancelPlan() ? result(true) : result(false, '그만둘 계획이 없습니다')
   }
 }

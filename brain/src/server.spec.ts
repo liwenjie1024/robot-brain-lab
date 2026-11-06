@@ -1,21 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
 import type { BrainMessage } from '@shared/brain/generated/status'
+import { Brain } from './brain'
 import { BrainServer } from './server'
-import { System1 } from './system1'
-import { RecordingSender } from './testing'
+import { RecordingSender, ScriptedModel } from './testing'
 
 let server: BrainServer | null = null
 
 async function start() {
-  const system1 = new System1(new RecordingSender())
-  server = new BrainServer(system1, () => new Set(['drone-1']))
+  const brain = new Brain(new RecordingSender(), new ScriptedModel())
+  server = new BrainServer(brain, () => new Set(['drone-1']))
   const port = await server.start(0)
   const socket = new WebSocket(`ws://127.0.0.1:${port}`)
   const received: BrainMessage[] = []
   socket.on('message', (data) => received.push(JSON.parse(data.toString())))
   await new Promise((resolve) => socket.once('open', resolve))
-  return { socket, received, system1 }
+  return { socket, received, brain }
 }
 
 async function until(condition: () => boolean): Promise<void> {
@@ -36,7 +36,7 @@ describe('BrainServer', () => {
 
     await until(() => received.some((message) => message.type === 'brainStatus'))
 
-    expect(received[0]).toMatchObject({ type: 'brainStatus', autonomy: false, skill: { name: 'idle' } })
+    expect(received[0]).toMatchObject({ type: 'brainStatus', autonomy: false, skill: { name: 'idle' }, plan: null, planner: { model: 'test-model' } })
     socket.close()
   })
 
@@ -62,6 +62,23 @@ describe('BrainServer', () => {
     const results = received.filter((message) => message.type === 'controlResult')
     expect(results.map((result) => result.accepted)).toEqual([false, false])
     expect(results[0]?.reason).toContain('글자(JSON)')
+    socket.close()
+  })
+
+  it('말로 한 명령을 받으면 답한 뒤, 계획이 든 상태와 계획의 판단 기록을 보낸다', async () => {
+    const { received, socket } = await start()
+
+    socket.send(JSON.stringify({ type: 'order', id: 'o1', text: '물러나!' }))
+    await until(() => received.some((message) => message.type === 'controlResult'))
+    await until(() => received.some((message) => message.type === 'brainStatus' && message.plan !== null))
+
+    expect(received.find((message) => message.type === 'controlResult')).toEqual({ type: 'controlResult', id: 'o1', accepted: true })
+    expect(received.filter((message) => message.type === 'brainStatus').at(-1)).toMatchObject({
+      autonomy: true,
+      skill: { name: 'retreat' },
+      plan: { source: 'quick', state: 'running' },
+    })
+    expect(received.some((message) => message.type === 'decision' && message.kind === 'plan')).toBe(true)
     socket.close()
   })
 })

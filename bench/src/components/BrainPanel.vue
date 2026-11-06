@@ -3,13 +3,14 @@ import { NAlert, NButton, NCard, NEmpty, NRadioButton, NRadioGroup, NSelect, NSp
 import { computed, ref, watch } from 'vue'
 import type { Evasion, SkillName } from '@shared/brain/generated/control'
 import type { BrainStatus, Decision, DecisionKind } from '@shared/brain/generated/status'
+import { EVASION_LABELS, SKILL_LABELS } from '@shared/brain/labels'
 import type { UnitStatus } from '@shared/sim/generated/message'
 import type { BrainPhase } from '@/brain/brainClient'
 import type { TagType } from '@/utils/labels'
 
 /**
  * 빠른 뇌(System 1)를 다루는 칸: 조종 맡기기, 기술·표적·조준 경고 반응 고르기, 지금 하는 일과 판단 기록·지표.
- * 지금은 사람이 기술을 고른다 (나중에는 느린 뇌 System 2가 말을 듣고 고른다).
+ * 기술은 사람이 여기서 직접 고르거나, 말로 명령하면 느린 뇌(System 2)가 계획에 따라 고른다 (명령 칸).
  */
 const props = defineProps<{
   phase: BrainPhase
@@ -30,17 +31,15 @@ const AUTO_TARGET = '__auto__'
 const PERCENT = 100
 
 const SKILLS: { name: SkillName; label: string; help: string }[] = [
-  { name: 'idle', label: '대기', help: '그 자리에 멈춰 지시를 기다립니다.' },
-  { name: 'hold', label: '자리 지키기', help: '지금 자리를 붙잡고, 밀려나면 돌아옵니다.' },
-  { name: 'engage', label: '교전', help: '드론을 골라 거리를 맞추고, 조준이 맞을 때만 쏩니다.' },
-  { name: 'retreat', label: '물러나기', help: '드론 반대쪽으로 오르며 물러나고 방패를 듭니다.' },
+  { name: 'idle', label: SKILL_LABELS.idle, help: '그 자리에 멈춰 지시를 기다립니다.' },
+  { name: 'hold', label: SKILL_LABELS.hold, help: '지금 자리를 붙잡고, 밀려나면 돌아옵니다.' },
+  { name: 'engage', label: SKILL_LABELS.engage, help: '드론을 골라 거리를 맞추고, 조준이 맞을 때만 쏩니다.' },
+  { name: 'retreat', label: SKILL_LABELS.retreat, help: '드론 반대쪽으로 오르며 물러나고 방패를 듭니다.' },
 ]
-const EVASIONS: { value: Evasion; label: string }[] = [
-  { value: 'dodge', label: '피하기' },
-  { value: 'guard', label: '방패로 막기' },
-  { value: 'both', label: '피하며 막기' },
-  { value: 'none', label: '반응 안 함' },
-]
+const EVASIONS: { value: Evasion; label: string }[] = (['dodge', 'guard', 'both', 'none'] as const).map((value) => ({
+  value,
+  label: EVASION_LABELS[value],
+}))
 const KIND_LABELS: Record<DecisionKind, { text: string; type: TagType }> = {
   skill: { text: '기술', type: 'info' },
   target: { text: '표적', type: 'default' },
@@ -48,6 +47,7 @@ const KIND_LABELS: Record<DecisionKind, { text: string; type: TagType }> = {
   reflex: { text: '반사', type: 'error' },
   result: { text: '결과', type: 'success' },
   command: { text: '거절됨', type: 'error' },
+  plan: { text: '계획', type: 'info' },
 }
 
 const target = ref<string>(AUTO_TARGET)
@@ -113,7 +113,7 @@ function choose(skill: SkillName) {
         </n-radio-button>
       </n-radio-group>
 
-      <label class="label">기술 (누르면 위의 표적·반응과 함께 바로 바뀝니다)</label>
+      <label class="label">기술 (누르면 위의 표적·반응과 함께 바로 바뀝니다. 따르던 계획은 그만둡니다)</label>
       <n-space size="small">
         <n-tooltip v-for="skill in SKILLS" :key="skill.name">
           <template #trigger>

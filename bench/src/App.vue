@@ -8,6 +8,7 @@ import CombatLog from '@/components/CombatLog.vue'
 import CommandLog from '@/components/CommandLog.vue'
 import FlightPanel from '@/components/FlightPanel.vue'
 import MechaPanel from '@/components/MechaPanel.vue'
+import OrderPanel from '@/components/OrderPanel.vue'
 import RobotView from '@/components/RobotView.vue'
 import ScenarioPanel from '@/components/ScenarioPanel.vue'
 import UnitsPanel from '@/components/UnitsPanel.vue'
@@ -66,7 +67,7 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
           <div>
             <h1>로봇 두뇌 시험장</h1>
             <p class="subtitle">
-              2단계: 날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }}와 빠른 뇌(System 1) — 사람이 기술을 고르면 두뇌가 날고 쏘고 피합니다
+              3단계: 날고 무장한 시험 기체 {{ scene?.robot.name ?? '' }}와 두뇌 — 말로 명령하면 느린 뇌(System 2)가 계획을 짜고, 빠른 뇌(System 1)가 날고 쏘고 피합니다
             </p>
           </div>
           <n-tooltip>
@@ -90,6 +91,8 @@ const lowerGuard = () => void sim.send('방패 내리기', { type: 'guard', rais
           </section>
           <aside class="side">
             <mecha-panel :state="state" :names="names" :stale="phase !== 'open'" />
+            <order-panel :phase="brain.phase.value" :status="brain.status.value" :error="brain.orderError.value" :names="names"
+                         @order="brain.order" @cancel-plan="brain.cancelPlan" />
             <brain-panel :phase="brain.phase.value" :status="brain.status.value" :decisions="brain.decisions.value"
                          :last-error="brain.lastError.value" :units="state?.units ?? []" @set-autonomy="brain.setAutonomy"
                          @set-skill="brain.setSkill" @retry="brain.retry" />

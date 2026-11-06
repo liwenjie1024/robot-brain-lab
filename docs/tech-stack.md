@@ -17,6 +17,6 @@
 | 두뇌: 서버 | ws | 8.22.0 | Node에는 WebSocket 서버가 없다. 8.22.1은 나온 지 2주가 안 되어 쓰지 않음 | socket.io(자체 규약이라 무거움) |
 | 두뇌: 실행 | tsx | 4.23.15 | TypeScript를 바로 실행하고 tsconfig의 경로(@shared)를 읽는다 | Node 자체 타입 지우기(경로·JSON 가져오기를 못 함) |
 | 저장소 | npm 작업 공간 (shared, bench, brain) | - | 화면·두뇌가 몸 연결·규약 타입을 함께 쓰고 라이브러리를 한 번에 설치 | 패키지를 따로 배포(지금은 과함) |
-| 느린 뇌 | Ollama + qwen2.5:7b | 이 PC에 설치된 0.34.4 | 8GB GPU에 들어가고 JSON 형식 강제(format)를 지원 | 클라우드 API(지연·비용, 로컬 두뇌가 목표) |
+| 느린 뇌 | Ollama + qwen2.5:7b | 이 PC에 설치된 0.34.4 | 8GB GPU에 들어가고 JSON 형식 강제(format)를 지원. 따뜻할 때 첫 글자 40~80ms, 계획 전체 1~3.5초. 두뇌는 Node에 든 fetch로 /api/chat을 흘려 받는다 (라이브러리 없음) | 클라우드 API(지연·비용, 로컬 두뇌가 목표), ollama npm 패키지(fetch로 충분), 더 큰 모델(8GB GPU에 빠듯하고 느림) |
 
 1단계에서 쓰던 PyTorch(걷기 정책 실행)·PyYAML(정책 설정)·Unitree G1 모델은 몸을 BL-01로 바꾸며 뺐다 (git 기록 e60ee7e).

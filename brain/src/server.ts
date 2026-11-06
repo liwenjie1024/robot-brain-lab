@@ -1,8 +1,8 @@
 import { type WebSocket, WebSocketServer } from 'ws'
 import type { BrainMessage } from '@shared/brain/generated/status'
 import { STATUS_INTERVAL_MS } from './config'
+import type { Brain } from './brain'
 import { applyControl } from './controls'
-import type { System1 } from './system1'
 
 /** 지시 하나는 수백 바이트다. 큰 메시지는 경계에서 끊는다. */
 const MAX_CONTROL_BYTES = 4096
@@ -14,7 +14,7 @@ export class BrainServer {
   private stopLog: (() => void) | null = null
 
   constructor(
-    private readonly system1: System1,
+    private readonly brain: Brain,
     private readonly knownTargets: () => ReadonlySet<string>,
   ) {}
 
@@ -28,8 +28,8 @@ export class BrainServer {
       })
       server.on('connection', (socket) => this.welcome(socket))
       this.server = server
-      this.stopLog = this.system1.log.onDecision((decision) => this.broadcast(decision))
-      this.timer = setInterval(() => this.broadcast(this.system1.status()), STATUS_INTERVAL_MS)
+      this.stopLog = this.brain.log.onDecision((decision) => this.broadcast(decision))
+      this.timer = setInterval(() => this.broadcast(this.brain.status()), STATUS_INTERVAL_MS)
     })
   }
 
@@ -51,17 +51,17 @@ export class BrainServer {
   }
 
   private welcome(socket: WebSocket): void {
-    send(socket, this.system1.status())
-    for (const decision of this.system1.log.recent()) {
+    send(socket, this.brain.status())
+    for (const decision of this.brain.log.recent()) {
       send(socket, decision)
     }
     socket.on('message', (data, isBinary) => {
       const reply = isBinary
         ? { type: 'controlResult' as const, accepted: false, reason: '지시는 글자(JSON)로 보내야 합니다' }
-        : applyControl(data.toString(), this.system1, this.knownTargets())
+        : applyControl(data.toString(), this.brain, this.knownTargets())
       send(socket, reply)
       if (reply.accepted) {
-        this.broadcast(this.system1.status())
+        this.broadcast(this.brain.status())
       }
     })
   }

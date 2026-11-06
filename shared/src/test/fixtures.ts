@@ -1,4 +1,4 @@
-import type { BrainStatus } from '../brain/generated/status'
+import type { BrainStatus, PlanStatus } from '../brain/generated/status'
 import type { MechaStatus, StateMessage, UnitStatus } from '../sim/generated/message'
 import type { Limits } from '../sim/generated/scene'
 
@@ -75,6 +75,28 @@ export function brainStatus(overrides: Partial<BrainStatus> = {}): BrainStatus {
     target: 'drone-1',
     reflex: null,
     metrics: { tickMicrosAvg: 15, tickMicrosMax: 80, commandsPerSecond: 3, lastReactionMs: 17, shots: 4, hits: 3, kills: 1, damageTaken: 40 },
+    plan: null,
+    planner: { model: 'qwen2.5:7b', available: true },
+    ...overrides,
+  }
+}
+
+/** 언어 모델이 짠 두 단계 계획의 첫 단계를 하는 중 */
+export function planStatus(overrides: Partial<PlanStatus> = {}): PlanStatus {
+  return {
+    order: '드론 2부터 잡고 나머지도 정리해',
+    source: 'llm',
+    state: 'running',
+    say: '표적 드론 2를 먼저 잡고 나머지도 격파하겠습니다.',
+    steps: [
+      { skill: 'engage', target: 'drone-2', evasion: 'dodge', until: 'targetDestroyed', value: 0, state: 'running' },
+      { skill: 'engage', target: null, evasion: 'dodge', until: 'allDestroyed', value: 0, state: 'waiting' },
+    ],
+    current: 0,
+    retreatBelowHp: 0.3,
+    attempts: 1,
+    timing: { firstTokenMs: 120, firstStepMs: 1480, totalMs: 3020 },
+    error: null,
     ...overrides,
   }
 }

@@ -2,36 +2,75 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://robot-brain-lab.local/contracts/brain/control.schema.json",
   "title": "BrainControl",
-  "description": "화면(나중에는 느린 뇌 System 2)이 두뇌에게 보내는 지시. 두뇌는 controlResult로 답한다.",
+  "description": "화면이 두뇌에게 보내는 지시. 기술을 직접 고르거나(setSkill), 말로 명령해 느린 뇌가 계획을 짜게 한다(order). 두뇌는 controlResult로 답한다.",
   "type": "object",
   "oneOf": [
-    { "$ref": "#/$defs/SetSkill" },
-    { "$ref": "#/$defs/SetAutonomy" }
+    {
+      "$ref": "#/$defs/SetSkill"
+    },
+    {
+      "$ref": "#/$defs/SetAutonomy"
+    },
+    {
+      "$ref": "#/$defs/Order"
+    },
+    {
+      "$ref": "#/$defs/CancelPlan"
+    }
   ],
   "$defs": {
-    "ControlId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "ControlId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "SkillName": {
       "title": "SkillName",
       "description": "idle: 아무것도 안 함(멈춤), hold: 자리 지키기, engage: 교전, retreat: 물러나기",
-      "enum": ["idle", "hold", "engage", "retreat"]
+      "enum": [
+        "idle",
+        "hold",
+        "engage",
+        "retreat"
+      ]
     },
     "Evasion": {
       "title": "Evasion",
       "description": "조준 경고를 받았을 때. dodge: 옆으로 피하기, guard: 방패로 막기, both: 둘 다, none: 하지 않음",
-      "enum": ["dodge", "guard", "both", "none"]
+      "enum": [
+        "dodge",
+        "guard",
+        "both",
+        "none"
+      ]
     },
     "SetSkill": {
       "title": "SetSkill",
       "description": "기술을 고른다. target은 교전할 드론 (없으면 두뇌가 고른다).",
       "type": "object",
       "properties": {
-        "type": { "const": "setSkill" },
-        "id": { "$ref": "#/$defs/ControlId" },
-        "skill": { "$ref": "#/$defs/SkillName" },
-        "target": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "evasion": { "$ref": "#/$defs/Evasion" }
+        "type": {
+          "const": "setSkill"
+        },
+        "id": {
+          "$ref": "#/$defs/ControlId"
+        },
+        "skill": {
+          "$ref": "#/$defs/SkillName"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "evasion": {
+          "$ref": "#/$defs/Evasion"
+        }
       },
-      "required": ["type", "skill"],
+      "required": [
+        "type",
+        "skill"
+      ],
       "additionalProperties": false
     },
     "SetAutonomy": {
@@ -39,11 +78,60 @@
       "description": "enabled: true면 두뇌가 몸에 명령을 보내고, false면 보기만 한다 (사람이 조종).",
       "type": "object",
       "properties": {
-        "type": { "const": "setAutonomy" },
-        "id": { "$ref": "#/$defs/ControlId" },
-        "enabled": { "type": "boolean" }
+        "type": {
+          "const": "setAutonomy"
+        },
+        "id": {
+          "$ref": "#/$defs/ControlId"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
       },
-      "required": ["type", "enabled"],
+      "required": [
+        "type",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "Order": {
+      "title": "Order",
+      "description": "말로 한 명령 (1~200자). 느린 뇌가 계획을 짜 기술을 차례로 고른다. 받으면 두뇌가 조종을 맡는다.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "order"
+        },
+        "id": {
+          "$ref": "#/$defs/ControlId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "CancelPlan": {
+      "title": "CancelPlan",
+      "description": "지금 짜거나 따르는 계획을 그만둔다 (기체는 지금 기술을 그대로 한다).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "cancelPlan"
+        },
+        "id": {
+          "$ref": "#/$defs/ControlId"
+        }
+      },
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     }
   }

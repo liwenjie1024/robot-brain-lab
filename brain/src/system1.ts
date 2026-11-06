@@ -1,5 +1,6 @@
 import type { Evasion, SkillName } from '@shared/brain/generated/control'
 import type { BrainStatus } from '@shared/brain/generated/status'
+import { EVASION_LABELS, SKILL_LABELS } from '@shared/brain/labels'
 import type { StateMessage } from '@shared/sim/generated/message'
 import type { SceneDescription } from '@shared/sim/generated/scene'
 import type { CombatEvent, OutgoingCommand } from '@shared/sim/simClient'
@@ -18,19 +19,8 @@ import type { Skill } from './skills/skill'
 const MECHA_ID = 'mecha'
 export const DEFAULT_EVASION: Evasion = 'dodge'
 
-export const SKILL_LABELS: Record<SkillName, string> = {
-  idle: '대기',
-  hold: '자리 지키기',
-  engage: '교전',
-  retreat: '물러나기',
-}
-
-const EVASION_LABELS: Record<Evasion, string> = {
-  dodge: '피하기',
-  guard: '방패로 막기',
-  both: '피하며 막기',
-  none: '반응 안 함',
-}
+/** 빠른 뇌가 내는 상태 (계획·언어 모델은 느린 뇌가 채운다) */
+export type System1Status = Omit<BrainStatus, 'plan' | 'planner'>
 
 export function createSkill(name: SkillName, target: string | null): Skill {
   switch (name) {
@@ -106,12 +96,15 @@ export class System1 {
   }
 
   onState(state: StateMessage): void {
-    const receivedAt = this.now()
-    if (this.lastSimTime !== null && state.simTime < this.lastSimTime) {
+    this.decide(perceive(state), this.now())
+  }
+
+  /** receivedAt: 몸의 상태를 받은 때 (판단 시간·반응 시간을 여기서부터 잰다) */
+  decide(perception: Perception, receivedAt: number): void {
+    if (this.lastSimTime !== null && perception.simTime < this.lastSimTime) {
       this.restart()
     }
-    this.lastSimTime = state.simTime
-    const perception = perceive(state)
+    this.lastSimTime = perception.simTime
     const reflex = this.reflex.update(perception, this.skill.name === 'idle' ? 'none' : this.evasion)
     const intent = withReflex(this.skill.decide(perception), reflex)
     this.metrics.tick(receivedAt)
@@ -154,7 +147,7 @@ export class System1 {
     }
   }
 
-  status(): BrainStatus {
+  status(): System1Status {
     const intent = this.lastIntent
     const reflex = this.lastReflex
     return {

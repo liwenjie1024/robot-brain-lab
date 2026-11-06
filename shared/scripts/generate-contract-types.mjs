@@ -9,7 +9,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 // 규약 묶음(contracts 아래 폴더) → 만든 타입을 둘 곳(shared/src 아래)
 const groups = {
   sim: ['command', 'message', 'scene'],
-  brain: ['control', 'status'],
+  brain: ['control', 'status', 'plan'],
 }
 
 let count = 0
