@@ -13,6 +13,10 @@
 | 화면: 3D | three.js | 0.186.1 | 기본 도형·그림자·카메라 조작·사격 광선, 3D를 쓰는 화면에서만 불러옴 | Babylon.js |
 | 화면: 규약 | Ajv (2020-12), json-schema-to-typescript | 8.20.0, 16.0.0 | 받은 메시지를 규약 스키마로 검증, 스키마에서 타입 생성 (규약 한 곳) | 손으로 쓴 타입(규약과 어긋나기 쉬움) |
 | 화면: 빌드·점검 | Vite, Vitest(jsdom), vue-tsc, ESLint | 8.3.4, 5.0.5, 3.3.13, 10.13.0 | - | - |
-| (다음) 느린 뇌 | Ollama + qwen2.5:7b | 이 PC에 설치된 0.34.4 | 8GB GPU에 들어가고 JSON 형식 강제(format)를 지원 | 클라우드 API(지연·비용, 로컬 두뇌가 목표) |
+| 두뇌 | TypeScript + Node 24 | 5.9.3, 24.15 | 나중에 두뇌만 휴대폰(React Native)으로 옮길 수 있게. Node 24에 WebSocket·fetch가 들어 있어 몸 연결 코드를 화면과 함께 쓴다 | Python(화면과 코드를 나눠 쓸 수 없음) |
+| 두뇌: 서버 | ws | 8.22.0 | Node에는 WebSocket 서버가 없다. 8.22.1은 나온 지 2주가 안 되어 쓰지 않음 | socket.io(자체 규약이라 무거움) |
+| 두뇌: 실행 | tsx | 4.23.15 | TypeScript를 바로 실행하고 tsconfig의 경로(@shared)를 읽는다 | Node 자체 타입 지우기(경로·JSON 가져오기를 못 함) |
+| 저장소 | npm 작업 공간 (shared, bench, brain) | - | 화면·두뇌가 몸 연결·규약 타입을 함께 쓰고 라이브러리를 한 번에 설치 | 패키지를 따로 배포(지금은 과함) |
+| 느린 뇌 | Ollama + qwen2.5:7b | 이 PC에 설치된 0.34.4 | 8GB GPU에 들어가고 JSON 형식 강제(format)를 지원 | 클라우드 API(지연·비용, 로컬 두뇌가 목표) |
 
 1단계에서 쓰던 PyTorch(걷기 정책 실행)·PyYAML(정책 설정)·Unitree G1 모델은 몸을 BL-01로 바꾸며 뺐다 (git 기록 e60ee7e).
