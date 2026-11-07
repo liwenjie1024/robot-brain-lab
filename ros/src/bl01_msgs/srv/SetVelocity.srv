@@ -1,0 +1,6 @@
+# 비행 속도 (몸 기준, REP 103). 다음 명령까지 유지한다. 범위는 장면 설명의 limits
+geometry_msgs/Twist velocity
+---
+# 몸이 받았는지. 받지 않으면 까닭 (범위 밖 값은 잘라 쓰지 않고 거절한다)
+bool accepted
+string reason

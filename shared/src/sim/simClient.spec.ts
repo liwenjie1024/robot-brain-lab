@@ -1,43 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FakeSocket } from '../test/fakeSocket'
 import { stateMessage } from '../test/fixtures'
 import type { ShotMessage, StateMessage } from './generated/message'
 import type { SceneDescription } from './generated/scene'
 import { type CombatEvent, type ConnectionPhase, SimClient } from './simClient'
-
-class FakeSocket {
-  static instances: FakeSocket[] = []
-  readyState = 0
-  sent: string[] = []
-  onopen: (() => void) | null = null
-  onmessage: ((event: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
-
-  constructor(readonly url: string) {
-    FakeSocket.instances.push(this)
-  }
-
-  send(text: string) {
-    this.sent.push(text)
-  }
-
-  close() {
-    this.readyState = 3
-    this.onclose?.()
-  }
-
-  open() {
-    this.readyState = 1
-    this.onopen?.()
-  }
-
-  receive(message: unknown) {
-    this.onmessage?.({ data: typeof message === 'string' ? message : JSON.stringify(message) })
-  }
-
-  lastSent(): Record<string, unknown> {
-    return JSON.parse(this.sent.at(-1)!)
-  }
-}
 
 const SCENE = { robot: { name: 'BL-01', description: '', height: 16 }, movingBodies: [1], geoms: [] } as unknown as SceneDescription
 

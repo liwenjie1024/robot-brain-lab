@@ -172,3 +172,15 @@ async def test_reset_to_another_scenario(client):
     assert ack == {"type": "ack", "id": "r-1", "commandType": "reset", "simTime": 0.0}
     assert state["scenario"] == "empty"
     assert state["units"] == []
+
+
+async def test_episode_counts_resets(client):
+    """되돌릴 때마다 episode가 1씩 는다 (답과 상태가 다른 길로 오는 ROS 2 연결에서도 되돌린 뒤의 상태를 알아보게)"""
+    async with client.ws_connect("/ws") as socket:
+        before = (await next_message(socket, "state"))["episode"]
+        for index in range(2):
+            await socket.send_json({"type": "reset", "id": f"r-{index}"})
+            await next_message(socket, "ack")
+        after = (await next_message(socket, "state"))["episode"]
+
+    assert after == before + 2

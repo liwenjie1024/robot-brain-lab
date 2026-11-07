@@ -52,6 +52,7 @@ class Simulation:
         self._guard_unit: str | None = None
         self._push_until = 0.0
         self._events: list[Event] = []
+        self._episode = -1
         self.reset(scenario)
 
     @property
@@ -61,6 +62,14 @@ class Simulation:
     @property
     def control_dt(self) -> float:
         return PHYSICS_DT * CONTROL_DECIMATION
+
+    @property
+    def episode(self) -> int:
+        """처음으로 되돌린 횟수 (띄울 때 0).
+
+        명령의 답과 상태가 다른 길로 오는 연결(ROS 2)에서도 되돌린 뒤의 상태를 알아보게.
+        """
+        return self._episode
 
     @property
     def scenario(self) -> Scenario:
@@ -74,6 +83,7 @@ class Simulation:
         if scenario is not None:
             self._scenario = SCENARIOS[scenario]
         mujoco.mj_resetData(self.model, self.data)
+        self._episode += 1
         for index, pilot in enumerate(self.pilots):
             plan = self._plan(index)
             if plan is not None:

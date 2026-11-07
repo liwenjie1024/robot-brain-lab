@@ -45,9 +45,9 @@ export interface TrialRunnerDeps {
 }
 
 type Phase =
-  | { kind: 'resetting'; sentAt: number; acknowledged: boolean }
-  | { kind: 'waiting'; firstSimTime: number }
-  | { kind: 'running'; recorder: RunRecorder }
+  | { kind: 'resetting'; sentAt: number; acknowledged: boolean; episodeBefore: number | null }
+  | { kind: 'waiting'; firstSimTime: number; episode: number }
+  | { kind: 'running'; recorder: RunRecorder; episode: number }
 
 /**
  * 시험: 비교할 것마다 장면을 처음으로 되돌리고 두뇌에게 맡겨 여러 판을 돌린 뒤, 판마다 결과와 점수를, 모아서 가운데 값을 낸다.
@@ -60,7 +60,7 @@ export class TrialRunner {
   private phase: Phase | null = null
   private scenarios: ScenarioInfo[] = []
   private simConnected = false
-  private lastSimTime: number | null = null
+  private lastEpisode: number | null = null
 
   constructor(private readonly deps: TrialRunnerDeps) {}
 
@@ -123,8 +123,7 @@ export class TrialRunner {
   }
 
   onState(state: StateMessage): void {
-    const previousSimTime = this.lastSimTime
-    this.lastSimTime = state.simTime
+    this.lastEpisode = state.episode
     const phase = this.phase
     if (!this.running || !phase) {
       return
@@ -133,7 +132,7 @@ export class TrialRunner {
       this.awaitFirstState(phase, state)
       return
     }
-    if (previousSimTime !== null && state.simTime < previousSimTime) {
+    if (state.episode !== phase.episode) {
       this.end('failed', '시험 중에 다른 곳에서 장면을 처음으로 되돌렸습니다')
       return
     }
@@ -161,7 +160,7 @@ export class TrialRunner {
   private beginRun(setup: number, run: number): void {
     const series = this.series!
     series.current = { setup, run, phase: 'resetting', startDelayS: startDelay(run, series.runs, series.startSpreadS), elapsedS: 0 }
-    const phase: Phase = { kind: 'resetting', sentAt: this.deps.now(), acknowledged: false }
+    const phase: Phase = { kind: 'resetting', sentAt: this.deps.now(), acknowledged: false, episodeBefore: this.lastEpisode }
     this.phase = phase
     this.deps.subject.setAutonomy(false)
     // 장면 이름은 몸이 /scene으로 알린 것 가운데 하나다 (start에서 확인함)
@@ -185,9 +184,13 @@ export class TrialRunner {
     )
   }
 
-  /** 몸은 되돌리기의 답을 그 뒤의 상태보다 먼저 보낸다. 그래서 답을 받은 뒤 처음 온 상태가 되돌린 장면의 첫 상태다. */
+  /**
+   * 되돌리기의 답을 받고, 되돌린 횟수(episode)가 늘어난 첫 상태가 되돌린 장면의 첫 상태다.
+   * 답과 상태의 순서에 기대지 않는다 (ROS 2로 붙으면 서비스 답과 상태 토픽이 다른 길로 온다).
+   */
   private awaitFirstState(phase: Extract<Phase, { kind: 'resetting' }>, state: StateMessage): void {
-    if (!phase.acknowledged) {
+    const reset = phase.acknowledged && (phase.episodeBefore === null || state.episode > phase.episodeBefore)
+    if (!reset) {
       if (this.deps.now() - phase.sentAt > RESET_TIMEOUT_MS) {
         this.end('failed', '장면을 처음으로 되돌리지 못했습니다 (몸이 답하지 않음)')
       }
@@ -198,7 +201,7 @@ export class TrialRunner {
       this.end('failed', `되돌린 장면이 다릅니다: ${state.scenario}`)
       return
     }
-    const waiting: Phase = { kind: 'waiting', firstSimTime: state.simTime }
+    const waiting: Phase = { kind: 'waiting', firstSimTime: state.simTime, episode: state.episode }
     this.phase = waiting
     this.progress().phase = 'waiting'
     this.awaitTakeover(waiting, state)
@@ -215,7 +218,7 @@ export class TrialRunner {
       this.end('failed', '이 장면에는 드론이 없어 점수를 낼 수 없습니다')
       return
     }
-    this.phase = { kind: 'running', recorder }
+    this.phase = { kind: 'running', recorder, episode: phase.episode }
     progress.phase = 'running'
     const entry = this.series!.setups[progress.setup]!
     const delay = progress.startDelayS > 0 ? ` (${progress.startDelayS}초 늦춰 맡음)` : ''

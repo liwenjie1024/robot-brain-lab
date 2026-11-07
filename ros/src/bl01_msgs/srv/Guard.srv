@@ -1,0 +1,7 @@
+# 방패를 들거나 내린다. unit을 주면 그 유닛 쪽을 막는다 (빈 글이면 앞)
+bool raised
+string unit
+---
+# 몸이 받았는지. 받지 않으면 까닭 (범위 밖 값은 잘라 쓰지 않고 거절한다)
+bool accepted
+string reason

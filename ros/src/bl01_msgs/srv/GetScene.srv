@@ -1,0 +1,6 @@
+# 장면 설명 (contracts/sim의 SceneDescription: 모양·유닛·시험 장면·명령 범위)을 JSON 글로 준다.
+# 그리는 데 쓰는 모양(geoms·meshes)까지 담고 있어 ROS 메시지로 나누지 않는다. 받는 쪽이 규약 스키마로 확인한다.
+---
+# 몸에 붙지 못해 아직 설명이 없으면 false
+bool available
+string scene_json

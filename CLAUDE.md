@@ -32,18 +32,21 @@ sim/             몸: MuJoCo 물리(500Hz) + 비행·팔 제어 System 0 + 무�
                  Python 3.13, Linux 컨테이너에서만 돈다 (아래 규칙)
                  mecha(기체 모양) arena(시험장) flight(비행 제어) arms(팔 제어) weapons·combat(사격·체력)
                  drones·scenarios(표적 드론·시험 장면) simulation(진행) runner·server(실시간·서버)
+ros/             ROS 2 쪽 몸 (Lyrical 컨테이너 하나): bl01_msgs(메시지·서비스) bl01_driver(몸의 WebSocket → ROS 2 토픽·서비스,
+                 sim_link(몸 연결) convert(바꾸기) driver_node) + rosbridge(:9090). scripts/record-bag.sh(rosbag2로 남기기)
 brain/           두뇌 (TypeScript, Node, :8766). 나중에 휴대폰 React Native로 옮길 수 있게 TypeScript로 쓴다
                  System 1: perception(보이는 것) skills/(기술) reflexes(반사) commander(바뀐 명령만) system1(판단·기록·지표)
                  System 2(system2/): quickOrders(짧은 명령) planCache(기억) model(Ollama) prompt planStream(흘려 받기)
                  planCheck(계획 확인) planRun(단계 넘기기) system2(묻기·다시 묻기·끊기)
                  trials/: trialRunner(판 돌리기) runRecorder(한 판의 결과, 몸이 알린 값으로) trialStats(가운데 값) trialStore(남기기)
                  brain(둘과 시험을 묶음, 사람이 앞섬) server·controls(화면이 붙는 곳, 지시 검증)
-shared/          화면과 두뇌가 함께 쓰는 것: 몸 연결(SimClient), 규약에서 만든 타입(*/generated), 기술·계획 이름(brain/labels),
+shared/          화면과 두뇌가 함께 쓰는 것: 몸 연결(SimClient, 같은 모양 BodyLink), ROS 2로 몸 연결(ros/: rosbridge·bl01·RosBodyClient),
+                 규약에서 만든 타입(*/generated), 기술·계획 이름(brain/labels),
                  시험 점수 셈법(brain/trialScore), 시험용 값(test/fixtures)
 bench/           시험장 화면: Vue 3 + TypeScript + Naive UI + three.js. 한 화면(넘기지 않음)에 조종 보기 네 칸:
                  3D·기체 상태 | 두뇌(말로 명령·빠른 뇌) | 직접 조종(장면·비행·드론과 무장) | 기록(판단·전투·명령 탭).
                  시험과 점수는 머리의 "보기"로 바꾼다. 몸은 /sim, 두뇌는 /brain으로 개발 서버가 넘겨 준다
-results/         두뇌가 남긴 시험 결과(trials/*.json). git에 넣지 않는다
+results/         두뇌가 남긴 시험 결과(trials/*.json), rosbag2 기록(bags/). git에 넣지 않는다
 docs/            구조·기체·시험 장면·잰 값(architecture.md), 기술 스택(tech-stack.md)
 scripts/         로컬 점검(check.ps1)
 ```
@@ -60,6 +63,9 @@ npm run bench                           # 시험장 화면 (http://localhost:518
 .\scripts\check.ps1                     # 커밋 전 점검: 몸(컨테이너)·화면·공용·두뇌 lint·형식·시험·빌드
 docker compose run --rm sim pytest      # 몸 시험만
 npm run contracts                       # contracts의 JSON Schema를 고친 뒤 TypeScript 타입 다시 만들기
+docker compose up -d --build ros        # ROS 2 쪽 몸 (rosbridge ws://localhost:9090, 코드를 고치면 docker compose build ros)
+$env:BODY_LINK='ros'; npm run brain     # 두뇌를 ROS 2로 몸에 붙이기 (기본은 몸의 WebSocket: BODY_LINK=ws)
+docker compose exec ros bl01-record     # 토픽을 rosbag2(MCAP)로 남기기 → results/bags (Ctrl+C로 멈춤)
 ```
 
 사람이 화면을 쓰는 동안 시험을 오래 돌리려면 몸·두뇌·화면을 하나 더 띄운다 (시험은 장면을 계속 되돌린다):
@@ -68,6 +74,8 @@ npm run contracts                       # contracts의 JSON Schema를 고친 뒤
 docker compose run -d --rm --name robot-brain-lab-sim-trials -p 8775:8765 sim
 cd brain && SIM_URL=http://localhost:8775 BRAIN_PORT=8776 node --import tsx src/main.ts
 cd bench && VITE_SIM_TARGET=http://localhost:8775 VITE_BRAIN_TARGET=http://localhost:8776 node ../node_modules/vite/bin/vite.js --port 5181 --strictPort
+# ROS 2로 잴 때: 드라이버를 시험용 몸에 붙이고, 두뇌는 BODY_LINK=ros ROSBRIDGE_URL=ws://localhost:9091
+docker compose run -d --rm --no-deps --name robot-brain-lab-ros-trials -p 9091:9090 -e SIM_WS_URL=ws://robot-brain-lab-sim-trials:8765/ws ros
 ```
 
 ## 규칙
@@ -133,5 +141,17 @@ cd bench && VITE_SIM_TARGET=http://localhost:8775 VITE_BRAIN_TARGET=http://local
   다섯 판이 똑같음) 판마다 맡는 때를 고르게 늦추고(startSpreadS), 시간·피해는 맡은 때부터 잰다. 견줄 것을 번갈아 돌리고
   (1판째를 모두 → 2판째, 같은 판 번호는 같은 늦춤), 가운데 값과 범위로 견준다. 시험 중에는 화면의 다른 지시를 거절하고(시험 멈추기만), 다른 곳에서 장면을
   되돌리거나 몸과 끊기면 시험이 실패한다. 말로 한 명령은 판마다 기억한 계획을 잊고 새로 묻는다.
+- **ROS 2 쪽 몸(ros/)은 몸을 바꾸지 않고 드라이버 노드가 몸의 WebSocket에 붙어 ROS 2로 낸다** (실제 로봇의 SDK + ROS 드라이버처럼).
+  몸은 Python 3.13(MuJoCo), ROS 이미지는 3.14라 몸 안에 rclpy를 넣지 않는다. ROS 2 노드는 모두 한 컨테이너 안에 두고
+  (`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, DDS는 Docker Desktop 가상 머신 밖으로 잘 나가지 않는다) 바깥은 rosbridge로 붙는다.
+  ROS 이미지는 digest로, apt 패키지는 판으로 고정한다. Python 패키지는 pip가 아니라 Ubuntu 패키지로 넣는다.
+- 몸의 규약(`contracts/sim`)을 바꾸면 `ros/src/bl01_msgs`, 바꾸기(`bl01_driver/convert.py`, `shared/src/ros/bl01.ts`)와 그 시험도
+  함께 고친다. ROS 메시지에는 없음(null)이 없어 빈 글이나 `has_*`로 알린다. 명령은 서비스로(답: accepted·reason), 속도는 REP 103.
+- 서비스 답과 상태 토픽은 다른 길로 와 순서가 보장되지 않는다. 되돌린 뒤의 상태는 상태의 `episode`(되돌린 횟수)로 알아본다
+  (시험이 답 뒤에 온 첫 상태에 기대지 않는다). 두뇌는 `BodyLink` 모양만 쓰므로 `SimClient`·`RosBodyClient` 어느 쪽이든 그대로 돈다.
+- 드라이버의 `/bl01/get_scene`은 몸과 붙어 있을 때만 장면 설명을 준다 (끊긴 뒤 남은 설명으로 두뇌가 붙은 줄 알지 않게).
+  ROS 이미지는 소스를 붙이지 않고 복사하므로 드라이버를 고치면 `docker compose build ros` 뒤 다시 띄운다.
+- 두뇌의 기본 연결은 몸의 WebSocket이다. ROS 2로 붙여도 15판이 똑같았다 (명령의 답 둘 다 약 20ms, 반응 18ms; architecture.md).
+  Lyrical의 `ros2 bag record`는 토픽을 `--topics`로 받고, ROS의 setup.bash는 `set -u`에서 멈추므로 source한 뒤에 켠다.
 - 장면 설명(`/scene`의 scenarios)은 드론 수·반격하는 드론 수를 알린다. 화면·시험은 장면 이름을 몰라도 드론이 없는 장면을 거른다.
 - 사용자의 다른 프로젝트(E:\Workspace\iot)와 섞지 않는다. 그 프로젝트는 마무리되었다.

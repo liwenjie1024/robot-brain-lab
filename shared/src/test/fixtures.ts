@@ -79,6 +79,7 @@ export function stateMessage(overrides: Partial<StateMessage> = {}): StateMessag
   return {
     type: 'state',
     seq: 1,
+    episode: 0,
     simTime: 12.34,
     scenario: 'targets',
     bodies: [0, 0, 10.5, 1, 0, 0, 0],

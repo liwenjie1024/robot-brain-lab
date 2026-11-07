@@ -24,6 +24,10 @@ export interface StateMessage {
    */
   seq: number
   /**
+   * 처음으로 되돌린 횟수 (띄울 때 0, 되돌릴 때마다 1씩). 명령의 답과 상태가 다른 길로 오는 연결(ROS 2)에서도 되돌린 뒤의 상태를 알아본다.
+   */
+  episode: number
+  /**
    * 처음으로 되돌린 뒤 지난 시뮬레이션 시각 s
    */
   simTime: number

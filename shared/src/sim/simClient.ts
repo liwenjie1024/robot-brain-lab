@@ -55,7 +55,8 @@ interface PendingCommand {
   timer: ReturnType<typeof setTimeout>
 }
 
-const validateMessage = new Ajv2020({ allErrors: false }).compile<SimMessage>(messageSchema)
+/** 몸이 보낸 메시지를 규약 스키마로 확인한다 (ROS 2로 받은 것도 규약 모양으로 바꾼 뒤 같은 것으로 확인한다) */
+export const validateSimMessage = new Ajv2020({ allErrors: false }).compile<SimMessage>(messageSchema)
 
 export class SimClient {
   private socket: WebSocket | null = null
@@ -182,8 +183,8 @@ export class SimClient {
       this.emit('invalidMessage', 'JSON이 아닌 메시지')
       return
     }
-    if (!validateMessage(message)) {
-      this.emit('invalidMessage', validateMessage.errors?.[0]?.message ?? '규약과 다른 메시지')
+    if (!validateSimMessage(message)) {
+      this.emit('invalidMessage', validateSimMessage.errors?.[0]?.message ?? '규약과 다른 메시지')
       return
     }
     switch (message.type) {

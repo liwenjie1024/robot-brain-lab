@@ -103,6 +103,7 @@ class RealtimeRunner:
         return {
             "type": "state",
             "seq": self._seq,
+            "episode": simulation.episode,
             "simTime": round(simulation.sim_time, 4),
             "scenario": simulation.scenario.name,
             "bodies": np.round(simulation.body_poses(self._bodies), 4).ravel().tolist(),

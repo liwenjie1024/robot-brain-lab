@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    커밋 전 로컬 점검: 몸(sim) 린트·형식·시험(컨테이너), 화면(bench) 린트·형식·시험·빌드.
+    커밋 전 로컬 점검: 몸(sim)·ROS 2(ros) 린트·형식·시험(컨테이너), 화면(bench) 린트·형식·시험·빌드, 공용·두뇌 린트·형식·시험.
 .EXAMPLE
     .\scripts\check.ps1
 #>
@@ -32,11 +32,24 @@ function Invoke-Step([string]$Name, [string]$Directory, [scriptblock]$Command) {
 Invoke-Step '몸: 형식·린트·시험 (컨테이너)' $Root {
     docker compose run --rm --build sim sh -c 'ruff format --check . && ruff check . && pytest -q'
 }
+# ROS 2 쪽 몸: 이미지를 만들고 그 안에서 시험한다. 형식·린트는 몸 이미지의 Ruff로 (ROS 이미지에 pip를 쓰지 않으려고)
+Invoke-Step 'ROS 2: 빌드·시험 (컨테이너)' $Root {
+    docker compose build ros
+    if ($LASTEXITCODE -eq 0) {
+        docker compose run --rm --no-deps ros bash -c 'source install/setup.bash && cd src/bl01_driver && python3 -m pytest -q test'
+    }
+}
+Invoke-Step 'ROS 2: 형식·린트 (Ruff)' $Root {
+    docker compose run --rm --no-deps -v "$(Join-Path $Root 'ros'):/ros" sim sh -c 'cd /ros && ruff format --check . && ruff check .'
+}
 Invoke-Step '화면: 코드 규칙 (ESLint)' (Join-Path $Root 'bench') { npx eslint . }
 Invoke-Step '화면: 형식 검사 (TypeScript)' (Join-Path $Root 'bench') { npx vue-tsc --noEmit }
 Invoke-Step '화면: 시험 (Vitest)' (Join-Path $Root 'bench') { npx vitest run }
 Invoke-Step '화면: 빌드' (Join-Path $Root 'bench') { npx vite build }
-Invoke-Step '공용: 형식·시험' (Join-Path $Root 'shared') { npx tsc --noEmit; if ($LASTEXITCODE -eq 0) { npx vitest run } }
+# 공용 코드는 두뇌와 같은 코드 규칙을 쓴다 (공용에는 따로 ESLint 설정이 없다)
+Invoke-Step '공용: 코드 규칙·형식·시험' (Join-Path $Root 'shared') {
+    npx eslint --config ../brain/eslint.config.js src; if ($LASTEXITCODE -eq 0) { npx tsc --noEmit }; if ($LASTEXITCODE -eq 0) { npx vitest run }
+}
 Invoke-Step '두뇌: 코드 규칙·형식·시험' (Join-Path $Root 'brain') {
     npx eslint .; if ($LASTEXITCODE -eq 0) { npx tsc --noEmit }; if ($LASTEXITCODE -eq 0) { npx vitest run }
 }

@@ -1,0 +1,6 @@
+# 유닛을 소총으로 겨누고 계속 따라간다
+string unit
+---
+# 몸이 받았는지. 받지 않으면 까닭 (범위 밖 값은 잘라 쓰지 않고 거절한다)
+bool accepted
+string reason

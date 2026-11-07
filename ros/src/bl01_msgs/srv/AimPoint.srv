@@ -1,0 +1,6 @@
+# 세계 기준 점 [x, y, z] m을 겨눈다
+float64[3] point
+---
+# 몸이 받았는지. 받지 않으면 까닭 (범위 밖 값은 잘라 쓰지 않고 거절한다)
+bool accepted
+string reason

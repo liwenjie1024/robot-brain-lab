@@ -1,0 +1,6 @@
+# 장면을 처음으로 되돌린다 (scenario가 빈 글이면 지금 장면)
+string scenario
+---
+# 몸이 받았는지. 받지 않으면 까닭 (범위 밖 값은 잘라 쓰지 않고 거절한다)
+bool accepted
+string reason

@@ -58,8 +58,8 @@ describe('Brain', () => {
 
     expect(brain.startTrials({ type: 'startTrials', scenario: 'skirmish', setups: [{ kind: 'skill', skill: 'engage', evasion: 'guard' }], runs: 1, timeLimitS: 60, startSpreadS: 0 })).toBeNull()
     await settle()
-    brain.onState({ ...STATE, simTime: 0.02, scenario: 'skirmish' })
-    brain.onState({ ...STATE, simTime: 20, scenario: 'skirmish', units: [drone({ id: 'drone-1', alive: false })] })
+    brain.onState({ ...STATE, simTime: 0.02, episode: 1, scenario: 'skirmish' })
+    brain.onState({ ...STATE, simTime: 20, episode: 1, scenario: 'skirmish', units: [drone({ id: 'drone-1', alive: false })] })
     await settle()
 
     expect(sender.sent).toContainEqual({ type: 'reset', scenario: 'skirmish' })

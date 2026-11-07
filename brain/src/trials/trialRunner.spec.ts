@@ -61,9 +61,17 @@ const SKIRMISH: StartTrials = {
 
 const DRONES = [drone({ id: 'drone-1' }), drone({ id: 'drone-2' }), drone({ id: 'drone-3' })]
 
+/** 시험 속 몸: 시각이 줄면 되돌린 것이라 되돌린 횟수(episode)를 1 늘린다 (실제 몸과 같게) */
+const body = { episode: 0, lastSimTime: null as number | null }
+
 function state(simTime: number, overrides: { dead?: number; hp?: number; scenario?: string } = {}): StateMessage {
+  if (body.lastSimTime !== null && simTime < body.lastSimTime) {
+    body.episode++
+  }
+  body.lastSimTime = simTime
   return stateMessage({
     simTime,
+    episode: body.episode,
     scenario: overrides.scenario ?? 'skirmish',
     units: DRONES.map((unit, index) => ({ ...unit, alive: index >= (overrides.dead ?? 0) })),
     mecha: mechaStatus({ hp: overrides.hp ?? 1000 }),
@@ -71,6 +79,8 @@ function state(simTime: number, overrides: { dead?: number; hp?: number; scenari
 }
 
 function setup() {
+  body.episode = 0
+  body.lastSimTime = null
   const sender = new RecordingSender()
   const subject = new RecordingSubject()
   const store = new MemoryStore()
@@ -172,6 +182,24 @@ describe('TrialRunner', () => {
     runner.onState(state(0.02))
 
     expect(subject.calls).toEqual(['setSkill engage dodge'])
+  })
+
+  it('순서(ROS 2): 답이 되돌린 뒤의 상태보다 늦게 오거나, 답 뒤에 되돌리기 전 상태가 와도 되돌린 횟수로 첫 상태를 고른다', async () => {
+    const { runner, sender, subject } = setup()
+    runner.onState(state(40))
+    sender.holdReplies = true
+    runner.start(SKIRMISH)
+
+    runner.onState(state(0.02))
+    expect(subject.calls).toEqual([])
+    sender.flush()
+    await settle()
+    runner.onState({ ...state(0.04), episode: 0 })
+    expect(subject.calls).toEqual([])
+    runner.onState(state(0.06))
+
+    expect(subject.calls).toEqual(['setSkill engage dodge'])
+    expect(runner.status()?.current?.phase).toBe('running')
   })
 
   it.each([

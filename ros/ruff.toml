@@ -1,0 +1,16 @@
+# ROS 2 드라이버도 몸(sim)과 같은 규칙으로 본다. 점검은 몸 이미지의 ruff로 한다 (scripts/check.ps1).
+line-length = 140
+target-version = "py314"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "N"]
+# 한국어 문구의 전각 기호(·, →)를 다른 글자로 바꾸라는 경고는 끈다.
+ignore = ["RUF001", "RUF002", "RUF003", "PLR0913"]
+
+[lint.isort]
+known-first-party = ["bl01_driver"]
+known-third-party = ["rclpy", "bl01_msgs", "builtin_interfaces", "geometry_msgs", "nav_msgs", "rosgraph_msgs", "std_msgs", "tf2_ros", "launch", "launch_ros"]
+
+[lint.per-file-ignores]
+# 시험은 기대 값을 숫자로 바로 쓰는 편이 읽기 쉽다.
+"**/test/**" = ["PLR2004"]

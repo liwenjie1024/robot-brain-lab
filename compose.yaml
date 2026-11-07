@@ -15,3 +15,21 @@ services:
       - ./sim:/app
       - ./contracts:/contracts:ro
     restart: unless-stopped
+
+  # ROS 2 쪽 몸: 몸의 WebSocket을 ROS 2 토픽·서비스로 내는 드라이버와 rosbridge (두뇌가 BODY_LINK=ros로 붙는다)
+  #   docker compose up -d --build ros     (코드를 고치면 docker compose build ros)
+  #   docker compose exec ros bl01-record  토픽을 rosbag2로 남기기 (results/bags)
+  ros:
+    build:
+      context: .
+      dockerfile: ros/Dockerfile
+    ports:
+      - "${ROSBRIDGE_PORT:-9090}:9090"
+    volumes:
+      - ./results/bags:/bags
+    environment:
+      SIM_WS_URL: ${ROS_SIM_WS_URL:-ws://sim:8765/ws}
+    depends_on:
+      sim:
+        condition: service_healthy
+    restart: unless-stopped

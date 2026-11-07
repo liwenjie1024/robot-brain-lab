@@ -1,0 +1,7 @@
+# 시험: 몸통을 세계 기준 힘 [x, y, z] N으로 duration_ms 동안 민다
+float64[3] force
+uint32 duration_ms
+---
+# 몸이 받았는지. 받지 않으면 까닭 (범위 밖 값은 잘라 쓰지 않고 거절한다)
+bool accepted
+string reason

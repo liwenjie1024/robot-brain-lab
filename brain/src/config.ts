@@ -4,6 +4,25 @@ import { fileURLToPath } from 'node:url'
 
 /** 몸(시뮬레이터) 주소. 몸은 Docker에서 돈다 (compose.yaml). */
 export const SIM_BASE_URL = process.env.SIM_URL ?? 'http://localhost:8765'
+
+export const BODY_LINKS = ['ws', 'ros'] as const
+export type BodyLinkKind = (typeof BODY_LINKS)[number]
+
+/**
+ * 몸에 붙는 길: ws는 몸의 WebSocket에 바로, ros는 ROS 2(rosbridge → BL-01 드라이버 노드)를 거쳐.
+ * 잘못 쓴 값은 모르는 척 넘기지 않고 띄울 때 멈춘다 (다른 길로 잰 줄 모르게).
+ */
+export function bodyLinkKind(value: string | undefined): BodyLinkKind {
+  const kind = value ?? 'ws'
+  if (!(BODY_LINKS as readonly string[]).includes(kind)) {
+    throw new Error(`BODY_LINK는 ${BODY_LINKS.join(' 또는 ')}만 쓸 수 있습니다 (받은 값: ${kind})`)
+  }
+  return kind as BodyLinkKind
+}
+
+export const BODY_LINK = bodyLinkKind(process.env.BODY_LINK)
+/** ROS 2로 붙을 때 rosbridge 주소 (compose.yaml의 ros 서비스) */
+export const ROSBRIDGE_URL = process.env.ROSBRIDGE_URL ?? 'ws://localhost:9090'
 /** 화면이 두뇌에 붙는 WebSocket 포트 */
 export const BRAIN_PORT = Number(process.env.BRAIN_PORT ?? 8766)
 /** 화면에 상태를 보내는 간격 (판단 기록은 생길 때마다 바로) */
