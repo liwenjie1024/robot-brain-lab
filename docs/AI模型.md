@@ -1,6 +1,6 @@
-# 每层用什么 AI 模型（提案 v0）
+# Nova 每层的 AI 模型（当前版本 v1.0）
 
-状态：**提案，待讨论**。2026-11-09。按 [系统结构 v1.0](../系统结构.md) 的 4 层来选。
+**2026-11-09 确认。** 按 [系统结构](系统结构.md) 的 4 层来选。讨论稿的全文在 git 历史里（原 `docs/research/08-每层的AI模型提案.md`）。
 注意：
 - 这个领域变化很快，一年内首选就可能换掉。所以每层都写了"要的是什么能力"，模型换了也能照这个标准重选。
 - 文中的成绩数字多是作者自己报的，没有独立验证。
@@ -10,8 +10,8 @@
 | 层 | 用什么 | 现在的首选 | 备选 | 训练数据 | 跑在哪 | 这台电脑（8 GB）上先用 |
 |---|---|---|---|---|---|---|
 | 脊髓层 1 kHz | **不用 AI**：经典控制 + 状态估计 + 规则反射 | 阻抗控制、不变扩展卡尔曼滤波（InEKF） | - | - | 实时分区 | 同左 |
-| 小脑层 50~200 Hz | **一个通用的全身控制策略**：跟踪任何全身动作，同时保持平衡 | 照 SONIC + HOVER 的做法，自己为 Nova 训练 | BeyondMimic、GMT、TWIST | 人的动作捕捉（AMASS 等）→ 转到 Nova 的关节；仿真里的强化学习 | 实时分区（CPU） | 小规模：先站、走、少量动作 |
-| 动作脑 30~200 Hz | ① 视觉-动作模型（VLA）：手臂、手、走路命令 ② 全身动作生成 ③ 专门技能 | ① GR00T N1.7 ② 文字生成动作的扩散模型（TextOp 一类）③ 带触觉的强化学习 | ① π0.5、SmolVLA、MolmoAct2 | 遥控示范、EgoDex（人手的视频）、仿真 | AI 分区·GPU 快实例 | ① SmolVLA（4.5 亿参数，消费级显卡能跑） |
+| 小脑层 50~200 Hz | **一个通用的全身控制策略**：跟踪任何全身动作，同时保持平衡 | 照 SONIC + HOVER 的做法，自己为 Nova 训练 | BeyondMimic、GMT、TWIST | 自己录的动作库（动作捕捉服）→ 转到 Nova 的关节；仿真里的强化学习 | 实时分区（CPU） | 小规模：先站、走、少量动作 |
+| 动作脑 30~200 Hz | ① 视觉-动作模型（VLA）：手臂、手、走路命令 ② 全身动作生成 ③ 专门技能 | ① GR00T N1.7 ② 文字生成动作的扩散模型（TextOp 一类）③ 带触觉的强化学习 | ① π0.5、SmolVLA、MolmoAct2 | 遥控示范、自己录的手部数据、仿真 | AI 分区·GPU 快实例 | ① SmolVLA（4.5 亿参数，消费级显卡能跑） |
 | 思考脑 1~10 Hz | 视觉语言模型（懂物理的推理）+ 语音 | Cosmos Reason 2（8B）+ 语音识别 SenseVoice + 语音合成 CosyVoice | Qwen3-VL-8B、RynnBrain；以后可换"能听能说"的 Qwen3-Omni | 用现成的；需要时少量微调 | AI 分区·GPU 慢实例 | Cosmos Reason 2（2B）或 Qwen3-VL-4B（量化） |
 
 ## 1. 脊髓层：不用 AI
@@ -67,7 +67,7 @@ AI 只用在**训练那一端**：
 | 输出 | 全部身体关节（不含手指）的目标、刚度、阻尼 |
 | 大小 | 先 500 万~2000 万参数，要在实时分区的 CPU 上 2 ms 内算完（实测） |
 | 训练 | mjlab（MuJoCo Warp），强化学习（PPO）；随机改质量、摩擦、电机力量、延迟、噪声；先老师后学生 |
-| 动作数据 | AMASS、LAFAN1、自己的动作捕捉；用 GMR 转到 Nova 的关节 |
+| 动作数据 | 自己录的"Nova 动作库"（动作捕捉服）或有商用授权的动作库；转到 Nova 的关节（见第 7 节） |
 | 另外的小策略 | 保护性摔倒、自己站起来、"慢慢坐下"（停止时用） |
 
 ## 3. 动作脑：三部分
@@ -176,17 +176,25 @@ AI 只用在**训练那一端**：
 
 所有输入输出的格式都写在"观测和动作的规约"里，训练和部署用同一个文件（系统结构第 6.2 节）。
 
-## 7. 数据从哪来
+## 7. 数据从哪来（按商用的要求）
+
+2026-11-09 定了**以后要商用**。所以进入训练的数据，都要是自己录的，或者有商用授权的。
+
+只许非商业研究的数据**不进训练**：AMASS、LAFAN1、SMPL-X 人体模型，以及 EgoDex（据第三方说是 CC BY-NC-ND）。
+为商用目的做的研发也可能算商业用途，所以这些数据尽量不用；要用时先找律师确认，或者买商用授权。
 
 | 数据 | 给谁 | 来源 |
 |---|---|---|
-| 人的全身动作 | 小脑层、动作生成 | AMASS、LAFAN1（只许非商业研究）；自己用动作捕捉服录；视频里估计的人体动作 |
-| 人手的动作 | 动作脑（手） | **EgoDex**（Apple，2026 年 ICLR）：829 小时第一人称视频，带每只手 25 个关节的 3D 轨迹，194 种桌面任务，公开 |
-| 遥控示范 | 动作脑 | 人戴 VR 头显（手部追踪）+ 全身追踪 → 转到 Nova → 在仿真里、以后在真机上录 |
-| 仿真里自己练 | 小脑层、专门技能 | 强化学习 |
-| 合成数据 | 动作脑 | 世界模型生成的视频（以后再考虑） |
+| 人的全身动作 | 小脑层、动作生成 | **自己录的"Nova 动作库"**：动作捕捉服（惯性式或光学式），演员签授权；也可以买有商用授权的动作库 |
+| 人手的动作 | 动作脑（手） | 自己录：VR 手部追踪 + 数据手套；也可以买有商用授权的第一人称手部数据 |
+| 遥控示范 | 动作脑 | 人戴 VR 头显 + 全身追踪 → 转到 Nova → 在仿真里、以后在真机上录 |
+| 仿真里自己练 | 小脑层、专门技能 | 强化学习（没有许可证问题） |
+| 合成数据 | 动作脑 | 世界模型生成的视频（以后再考虑；要看生成模型的许可证） |
 
-**遥控系统是数据的入口**。它要先做：VR 头显 + 手部和身体追踪 → GMR 一类的转换 → 仿真里的 Nova。SONIC 也用 PICO VR 遥控。
+- 动作转换工具 GMR 是 MIT 许可，可以用。但它读 AMASS 时用的 SMPL-X 只许研究，所以自己录的动作要用我们自己的骨架格式。
+- **遥控系统是数据的入口，要最先做**：VR 头显 + 手部和身体追踪 → 转到仿真里的 Nova。
+  - 遥控软件不绑定某一种设备。
+  - 先用能做全身追踪的（如 PICO 加追踪器，SONIC 现成支持）；手的精度不够时，再加 Apple Vision Pro 或数据手套。
 
 ## 8. 算力
 
@@ -223,23 +231,28 @@ AI 只用在**训练那一端**：
 | 动作脑 | 任务成功率、用时、33 种抓握做出来几种、力的"轻柔度"（Tabero 一类的评分） |
 | 思考脑 | 计划通过检查的比例、任务完成率、第一个子任务出来要多久、中文对话 |
 
-## 10. 许可证
+## 10. 许可证（商用前逐项确认）
 
-| 东西 | 许可证 | 要注意 |
+| 东西 | 许可证 | 商用 |
 |---|---|---|
-| GR00T N1.7、Cosmos Reason 2、SONIC | NVIDIA 开放模型许可 | 可商用，但要遵守它的条款 |
-| π0.5（openpi）、SmolVLA、Qwen3、Qwen3-Omni | Apache 2.0 | 宽松 |
-| AMASS、SMPL-X、LAFAN1 | 只许非商业研究 | 以后商用就要换数据，或者自己录 |
-| EgoDex | 用前查 | - |
+| GR00T N1.7、Cosmos Reason 2、SONIC | NVIDIA 开放模型许可 | 可以，按它的条款 |
+| π0.5（openpi）、SmolVLA、Qwen3、Qwen3-Omni | Apache 2.0 | 可以 |
+| SenseVoice | FunASR 自己的模型许可（不是 MIT，也不是 Apache） | 据第三方说可以，**要看原文确认** |
+| CosyVoice | 没查到 | **要确认** |
+| AMASS、SMPL-X、LAFAN1 | 只许非商业研究 | 不进训练 |
+| EgoDex | 据第三方说是 CC BY-NC-ND（禁止商用、禁止改编），没在官方仓库里核实 | 不进训练 |
+| GMR（动作转换工具） | MIT | 可以 |
 
-## 11. 要你确认的
+选模型和数据时，许可证和能力一起看。新加的东西先填这张表。其它商用要求见 [商用要求](商用要求.md)。
 
-1. 小脑层：照 SONIC + HOVER 的做法为 Nova 自己训练，可以吗？
-2. 动作脑：GR00T N1.7 当主力、π0.5 当对照，这台电脑上先用 SmolVLA 打通流程，可以吗？
-3. 思考脑：Cosmos Reason 2-8B 当主力，中文不够再加 Qwen3-VL；语音先用分开的小模型，可以吗？
-4. **大规模训练要用云上的大显卡**（几千 GPU 小时级），以后可以用吗？这台电脑只够小规模。
-5. **Nova 以后要商用吗？** 这决定能不能用只许研究的数据（AMASS 等），要不要从一开始就自己录动作。
-6. 遥控系统（VR 头显 + 追踪）是数据的入口，要先做。你有没有想用的 VR 设备？
+## 11. 已确认（2026-11-09）
+
+1. 小脑层照 SONIC + HOVER 的做法为 Nova 自己训练
+2. 动作脑以 GR00T N1.7 为主、π0.5 当对照；这台电脑上先用 SmolVLA 打通流程
+3. 思考脑用 Cosmos Reason 2-8B，中文不够再加 Qwen3-VL；语音先用分开的小模型
+4. 大规模训练用云上的大显卡
+5. 以后要商用：数据和许可证按第 7、10 节
+6. 遥控用的 VR 设备都可以：遥控软件不绑定设备，先用能做全身追踪的
 
 ## 资料
 
@@ -255,4 +268,5 @@ AI 只用在**训练那一端**：
 - Cosmos Reason 2：[文档](https://docs.nvidia.com/cosmos/latest/reason2/index.html)、[8B 模型说明](https://huggingface.co/nvidia/Cosmos-Reason2-8B/blob/main/README.md)、[VentureBeat](https://venturebeat.com/orchestration/nvidias-cosmos-reason-2-aims-to-bring-reasoning-vlms-into-the-physical-world)
 - 具身推理模型：[Vesta](https://research.nvidia.com/labs/gear/vesta/)、[RynnBrain 等](https://arxiv.org/pdf/2602.14979)、[Vlaser](https://mlanthology.org/iclr/2026/yang2026iclr-vlaser/)
 - Qwen3-Omni：[技术报告](https://arxiv.org/abs/2509.17765)
-- EgoDex：[论文](https://arxiv.org/abs/2505.11709)、[ICLR 2026](https://www.iclr.cc/virtual/2026/poster/10010617)
+- EgoDex：[论文](https://arxiv.org/abs/2505.11709)、[ICLR 2026](https://www.iclr.cc/virtual/2026/poster/10010617)、[许可证（第三方）](https://www.cloudpano.com/blog/egodex-license-explained)、[官方仓库](https://github.com/apple/ml-egodex)
+- SenseVoice 的许可证：[模型说明](https://huggingface.co/FunAudioLLM/SenseVoiceSmall/raw/refs%2Fpr%2F1/README.md)、[代码和权重分开（GitHub 讨论）](https://github.com/FlowiseAI/Flowise/issues/6454)
