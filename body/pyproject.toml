@@ -1,0 +1,21 @@
+[project]
+name = "nova-body"
+version = "0.1.0"
+description = "Nova 的身体：设计计算（质量闭环）和模型生成"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "N"]
+# 中文文字里的全角标点（，。：→）不要改成别的字符。
+ignore = ["RUF001", "RUF002", "RUF003", "PLR0913"]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里直接写期望的数，读起来更清楚。
+"tests/**" = ["PLR2004"]

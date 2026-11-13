@@ -1,0 +1,15 @@
+# Nova 的开发环境。身体的计算和仿真都在 Linux 容器里跑：
+# 这台电脑的 Windows（智能应用控制）会拦没有签名的 mujoco.dll。
+#   docker compose run --rm body pytest                         测试
+#   docker compose run --rm body python -m nova_body.mass_report  算一次质量闭环，报告写进 docs/报告
+name: nova
+
+services:
+  body:
+    build:
+      context: .
+      dockerfile: body/Dockerfile
+    # 挂上源码：改了代码不用重新做镜像。挂上 docs：报告直接写进仓库。
+    volumes:
+      - ./body:/app
+      - ./docs:/docs

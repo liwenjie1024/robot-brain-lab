@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+node_modules/
+dist/
+coverage/
+
+*.log
+.env
+
+# 运行的结果（记录、试验的分数）。报告放在 docs/报告，那里是要提交的。
+/results/

@@ -1,0 +1,5 @@
+# 代码要在 Linux 容器里跑，所以所有文本文件都用 LF 换行（Windows 上也一样）。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
