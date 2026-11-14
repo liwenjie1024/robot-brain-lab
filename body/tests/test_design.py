@@ -64,10 +64,10 @@ def test_fixed_mass_group_has_no_torques():
 def test_rejects_torque_count_that_differs_from_dof():
     """力矩的个数和自由度对不上时拒绝。"""
     with pytest.raises(ValueError, match="2 个自由度，却给了 1 个力矩"):
-        JointGroup("bad", "写错的关节", Segment.TORSO, False, 2, 2, Drive.ROTARY, Tag.CORE, (10.0,))
+        JointGroup("bad", "写错的关节", Segment.CHEST, False, 2, 2, Drive.ROTARY, Tag.CORE, (10.0,))
 
 
 def test_rejects_parallel_group_that_is_not_a_pair():
     """并联的一组必须是 2 个自由度、2 个驱动器。"""
     with pytest.raises(ValueError, match="并联的一组必须是 2 个自由度、2 个驱动器"):
-        JointGroup("bad", "写错的并联", Segment.TORSO, False, 1, 1, Drive.ROTARY, Tag.CORE, (10.0,), parallel=True)
+        JointGroup("bad", "写错的并联", Segment.CHEST, False, 1, 1, Drive.ROTARY, Tag.CORE, (10.0,), parallel=True)

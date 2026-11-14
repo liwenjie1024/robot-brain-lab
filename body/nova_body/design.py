@@ -85,7 +85,7 @@ PARALLEL_PAIR = 2
 
 JOINT_GROUPS: tuple[JointGroup, ...] = (
     # 头
-    JointGroup("neck_lower", "下颈 前后", Segment.TORSO, False, 1, 1, Drive.ROTARY, Tag.TO_PROVE, (30.0,)),
+    JointGroup("neck_lower", "下颈 前后", Segment.CHEST, False, 1, 1, Drive.ROTARY, Tag.TO_PROVE, (30.0,)),
     JointGroup("neck_upper", "上颈 转、点头", Segment.HEAD, False, 2, 2, Drive.ROTARY, Tag.CORE, (20.0, 20.0)),
     JointGroup("neck_upper_roll", "上颈 侧屈", Segment.HEAD, False, 1, 1, Drive.ROTARY, Tag.TO_PROVE, (20.0,)),
     JointGroup("eyes", "眼 左右、上下", Segment.HEAD, False, 4, 4, Drive.MICRO, Tag.TO_PROVE, fixed_mass_kg=0.12),
@@ -94,7 +94,7 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     JointGroup(
         "lumbar_pitch_roll",
         "腰椎 前后、侧弯",
-        Segment.TORSO,
+        Segment.PELVIS,
         False,
         2,
         2,
@@ -108,7 +108,7 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     JointGroup(
         "lumbar_yaw",
         "腰椎 转",
-        Segment.TORSO,
+        Segment.PELVIS,
         False,
         1,
         1,
@@ -121,7 +121,7 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     JointGroup(
         "thoracic_yaw",
         "胸椎 转",
-        Segment.TORSO,
+        Segment.CHEST,
         False,
         1,
         1,
@@ -133,7 +133,7 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     JointGroup(
         "thoracic_pitch_roll",
         "胸椎 前后、侧弯",
-        Segment.TORSO,
+        Segment.CHEST,
         False,
         2,
         2,
@@ -145,13 +145,13 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     ),
     # 肩胛的推杆要多大的力还没测（机体规格写的是"几百 N，待测"），先按每个 0.3 kg 估。
     JointGroup(
-        "scapula", "肩胛 上提、前伸、上旋", Segment.TORSO, True, 3, 3, Drive.SCREW, Tag.TO_PROVE, fixed_mass_kg=0.9
+        "scapula", "肩胛 上提、前伸、上旋", Segment.CHEST, True, 3, 3, Drive.SCREW, Tag.TO_PROVE, fixed_mass_kg=0.9
     ),
     # 手臂
     JointGroup(
         "shoulder_pitch",
         "肩 前后",
-        Segment.TORSO,
+        Segment.CHEST,
         True,
         1,
         1,
@@ -182,7 +182,7 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     JointGroup(
         "hip_pitch",
         "髋 前后",
-        Segment.TORSO,
+        Segment.PELVIS,
         True,
         1,
         1,
@@ -195,7 +195,7 @@ JOINT_GROUPS: tuple[JointGroup, ...] = (
     JointGroup(
         "hip_roll",
         "髋 侧摆",
-        Segment.TORSO,
+        Segment.PELVIS,
         True,
         1,
         1,

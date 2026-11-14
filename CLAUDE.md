@@ -30,7 +30,10 @@ docs/            设计。规格（现在定下的）：机体规格、系统结
                  research/（讨论的经过）、报告/（程序算出来的，不要手改）
 body/            身体：设计计算和模型生成。Python 3.13，只在 Linux 容器里跑
                  nova_body: anthropometry（人体比例） actuator_mass（驱动器有多重） design（关节表）
-                 mass_closure（质量闭环） mass_report（报告）
+                 mass_closure（质量闭环：每一段、每个驱动器、每样东西多重） mass_report（报告）
+                 skeleton（骨架：关节的转轴和范围、尺寸、左右镜像） hand（手的 22 个关节）
+                 posture（站姿） model（生成 MuJoCo 的模型：形状、东西放哪、驱动器、传感器、相机）
+                 standing（在仿真里站着、量结果） drawing（画成 SVG） model_report（报告）
 scripts/         本地检查（check.ps1）
 ```
 
@@ -39,6 +42,7 @@ scripts/         本地检查（check.ps1）
 ```powershell
 docker compose run --rm body pytest                            # 身体的测试
 docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环，报告写进 docs/报告/质量闭环.md
+docker compose run --rm body python -m nova_body.model_report  # 生成身体的模型、站 10 秒，报告和图写进 docs/报告/身体模型.md
 .\scripts\check.ps1                                            # 提交前的检查：格式、规则、测试、报告和代码对得上
 ```
 
@@ -51,7 +55,24 @@ docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环
 - 新的模型、数据、素材先查许可证，登记进 `docs/AI模型.md` 第 10 节（以后要商用）。
 - **计算和仿真只在 Linux 容器里跑。** 这台电脑的 Windows 开着智能应用控制，会拦没有签名的 `mujoco.dll`。
   不要关这个安全设置（关了要重装 Windows 才能再开）。容器挂着源码：改了 Python 代码不用重新做镜像；改了依赖要 `docker compose build body`。
-- **规约只写一处。** 关节表的源头是 `body/nova_body/design.py`。`docs/报告/` 里的文件是程序生成的：改假设、改代码以后重新生成，不要手改。
+- **规约只写一处。** 关节表（有哪些关节、力矩、记号）的源头是 `body/nova_body/design.py`；每个关节的转轴和范围在 `skeleton.py`、`hand.py`；
+  质量只从质量闭环来（模型不自己定重量：质量闭环里多了一样模型不认识的东西，生成时会报错）。
+  `docs/报告/` 里的文件是程序生成的：改假设、改代码以后重新生成，不要手改。报告里不写每次运行不一样的数（比如仿真比实时快多少）。
+- **身体的模型**（`model.py`，为什么这样做）：
+  - 骨架只写左侧，右侧用 `mirror_point`、`mirror_axis` 镜像，所以同一个正方向在两侧是同一个动作。加关节要加一条"往正方向转是不是说的那个动作"的测试。
+  - 身体要按"先把一段和它带着的都加完，再加下一段"的顺序加。MuJoCo 编译以后是这个顺序，这样关节清单和模型里的顺序才一样。
+  - 模型生成两遍：第一遍算站姿（要知道重心在哪），第二遍把站姿存成关键帧 `stand`。
+  - 站姿的目标 = 关节的角度 + 顶住重力要的力矩 ÷ 刚度。只给角度的话身体会往下沉（力量减半的身体沉了 2°）。
+  - 驱动器是"位置 + 阻尼"，积分用 implicitfast：阻尼很大，不这样算会不稳。以后要在运行时调软硬，就改模型里的 `actuator_gainprm`、`actuator_biasprm`。
+- **MuJoCo 容易踩的坑**（都实测过）：
+  - MjSpec 的角度默认是度，开头就设 `spec.compiler.degree = False`；但相机的 `fovy` 总是度。
+  - `mj_step` 以后，`sensordata` 里是这一步**开始时**的值，比 `qpos` 早一步。要现在的值先 `mj_forward`。
+  - 联动的等式约束（`mjEQ_JOINT`）的 `data` 要给满 12 个数。
+  - `contact` 传感器：用 `reftype`、`refname` 指定身体，读到的是这个身体**受到**的力，在世界坐标里；`intprm` 是 [报什么, 怎么合, 报几个]。
+  - 力传感器（`force`、`torque`）量的是上一段给这一段的力，带着这一段自己的重量；力矩是绕传感器那个点的。
+  - 脚底正好贴着地面时接触力是 0；身体先掉下去一点点（约 0.2 mm）地面才托住它。
+  - 测"只有某处碰到"时，别让别的地方深深插进地面：那样整个身体被猛地往上推，要测的那个接触反而没有力。
+- 画图（`drawing.py`）不用显卡：把每个形状投影成多边形写成 SVG。加了新的形状（比如圆柱）要先教它怎么画，不然会报错。
 - 文档、画面、测试的说明、提交信息都用中文。代码里的名字用英文，注释用中文。
 - 每加一样东西，记下它加了多少重量：多带 1 kg，总重要加 1.7~2 kg（质量闭环的结果）。
 - 换行一律用 LF（`.gitattributes`）。PowerShell 脚本里有中文，文件开头要带 BOM，不然 Windows PowerShell 会读成乱码。

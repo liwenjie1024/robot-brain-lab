@@ -3,6 +3,7 @@
 import pytest
 
 from nova_body.anthropometry import (
+    LENGTH_RATIO,
     MASS_FRACTION,
     PAIRED_SEGMENTS,
     STANDING_CHAIN,
@@ -29,10 +30,25 @@ def test_mass_fractions_add_up_to_whole_body():
 
 @pytest.mark.parametrize("segment", list(Segment), ids=[segment.value for segment in Segment])
 def test_only_limb_segments_are_paired(segment):
-    """手臂和腿的段有 2 个，头和躯干只有 1 个。"""
+    """手臂和腿的段有 2 个，头、胸和腹、骨盆只有 1 个。"""
     expected = 2 if segment in PAIRED_SEGMENTS else 1
     assert segment_count(segment) == expected
-    assert (segment in {Segment.HEAD, Segment.TORSO}) == (expected == 1)
+    assert (segment in {Segment.HEAD, Segment.CHEST, Segment.PELVIS}) == (expected == 1)
+
+
+def test_trunk_parts_add_up_to_the_whole_trunk():
+    """骨盆加上胸和腹，就是整个躯干：长度是身高的 0.288，质量是体重的 0.4346。"""
+    length = LENGTH_RATIO[Segment.PELVIS] + LENGTH_RATIO[Segment.CHEST]
+    mass = MASS_FRACTION[Segment.PELVIS] + MASS_FRACTION[Segment.CHEST]
+    assert length == pytest.approx(0.288)
+    assert mass == pytest.approx(0.4346)
+
+
+def test_lumbar_joint_is_at_navel_height():
+    """腰椎的关节在肚脐的高度：1.70 m 的人约 1.04 m。"""
+    below = (Segment.FOOT, Segment.SHANK, Segment.THIGH, Segment.PELVIS)
+    lumbar_height = sum(segment_length_m(segment, NOVA_HEIGHT_M) for segment in below)
+    assert lumbar_height == pytest.approx(1.043, abs=0.001)
 
 
 def test_forearm_length_matches_human_proportion():

@@ -9,10 +9,14 @@ from enum import StrEnum
 
 
 class Segment(StrEnum):
-    """身体的段。手臂和腿的段左右各一个；这个模块里的数都是一侧的。"""
+    """身体的段。手臂和腿的段左右各一个；这个模块里的数都是一侧的。
+
+    躯干分成两段，因为腰椎的关节在它们中间：骨盆（髋到腰椎的关节）、胸和腹（腰椎的关节到肩）。
+    """
 
     HEAD = "head"
-    TORSO = "torso"
+    CHEST = "chest"
+    PELVIS = "pelvis"
     UPPER_ARM = "upper_arm"
     FOREARM = "forearm"
     HAND = "hand"
@@ -23,7 +27,8 @@ class Segment(StrEnum):
 
 SEGMENT_NAMES: dict[Segment, str] = {
     Segment.HEAD: "头和颈",
-    Segment.TORSO: "躯干和骨盆",
+    Segment.CHEST: "胸和腹",
+    Segment.PELVIS: "骨盆",
     Segment.UPPER_ARM: "上臂",
     Segment.FOREARM: "前臂",
     Segment.HAND: "手",
@@ -36,10 +41,16 @@ PAIRED_SEGMENTS: frozenset[Segment] = frozenset(
     {Segment.UPPER_ARM, Segment.FOREARM, Segment.HAND, Segment.THIGH, Segment.SHANK, Segment.FOOT}
 )
 
-# 各段的长度占身高的比例。躯干是从髋到肩，头和颈是从肩到头顶，脚是踝的高度。
+# Winter：髋到肩是身高的 0.288。
+HIP_TO_SHOULDER_RATIO = 0.288
+# de Leva（男性，身高 1741 mm）：躯干的下段（髋关节到肚脐）长 145.7 mm。腰椎的关节放在肚脐的高度。
+PELVIS_LENGTH_RATIO = 0.0837
+
+# 各段的长度占身高的比例。头和颈是从肩到头顶，脚是踝的高度。
 LENGTH_RATIO: dict[Segment, float] = {
     Segment.HEAD: 0.182,
-    Segment.TORSO: 0.288,
+    Segment.CHEST: HIP_TO_SHOULDER_RATIO - PELVIS_LENGTH_RATIO,
+    Segment.PELVIS: PELVIS_LENGTH_RATIO,
     Segment.UPPER_ARM: 0.186,
     Segment.FOREARM: 0.146,
     Segment.HAND: 0.108,
@@ -49,12 +60,25 @@ LENGTH_RATIO: dict[Segment, float] = {
 }
 
 # 站着的时候，从脚底到头顶依次经过这几段；它们的长度加起来就是身高。
-STANDING_CHAIN: tuple[Segment, ...] = (Segment.FOOT, Segment.SHANK, Segment.THIGH, Segment.TORSO, Segment.HEAD)
+STANDING_CHAIN: tuple[Segment, ...] = (
+    Segment.FOOT,
+    Segment.SHANK,
+    Segment.THIGH,
+    Segment.PELVIS,
+    Segment.CHEST,
+    Segment.HEAD,
+)
+
+# de Leva：整个躯干占体重的 0.4346，分成上段 0.1596、中段 0.1633、下段 0.1117。
+UPPER_TRUNK_MASS_FRACTION = 0.1596
+MIDDLE_TRUNK_MASS_FRACTION = 0.1633
+LOWER_TRUNK_MASS_FRACTION = 0.1117
 
 # 各段的质量占体重的比例。成对的段是一侧的值。
 MASS_FRACTION: dict[Segment, float] = {
     Segment.HEAD: 0.0694,
-    Segment.TORSO: 0.4346,
+    Segment.CHEST: UPPER_TRUNK_MASS_FRACTION + MIDDLE_TRUNK_MASS_FRACTION,
+    Segment.PELVIS: LOWER_TRUNK_MASS_FRACTION,
     Segment.UPPER_ARM: 0.0271,
     Segment.FOREARM: 0.0162,
     Segment.HAND: 0.0061,

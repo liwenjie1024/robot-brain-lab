@@ -36,6 +36,9 @@ Invoke-Step '身体：格式、代码规则、测试（容器）' {
 Invoke-Step '身体：质量闭环的报告和代码对得上' {
     docker compose run --rm body sh -c 'python -m nova_body.mass_report --output /tmp/mass-report.md > /dev/null && cmp /tmp/mass-report.md /docs/报告/质量闭环.md'
 }
+Invoke-Step '身体：身体模型的报告、图和代码对得上' {
+    docker compose run --rm body sh -c 'python -m nova_body.model_report --output /tmp/body-model.md > /dev/null && cmp /tmp/body-model.md /docs/报告/身体模型.md && cmp /tmp/body-model.svg /docs/报告/身体模型.svg'
+}
 
 Write-Host ''
 $Results | Format-Table -AutoSize | Out-String | Write-Host

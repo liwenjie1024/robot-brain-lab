@@ -7,7 +7,7 @@ import pytest
 from nova_body.actuator_mass import ActuatorMassModel, best_today_model, conservative_model
 from nova_body.anthropometry import Segment, segment_count
 from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON
-from nova_body.mass_closure import Assumptions, MassBudget, MassClosureError, close_mass
+from nova_body.mass_closure import Assumptions, MassBudget, MassClosureError, close_mass, joint_peak_torques_nm
 
 BASE = Assumptions()
 
@@ -131,6 +131,74 @@ def test_fixed_mass_groups_count_their_actuators():
     passive_toes = line_for(budget, "toes_arch")
     assert passive_toes.count == 2
     assert passive_toes.total_kg == pytest.approx(0.2)
+
+
+def item_for(budget: MassBudget, key: str):
+    """找出某一样东西（电池、电脑……）。"""
+    return next(item for item in budget.items if item.key == key)
+
+
+def test_every_segment_is_parts_plus_its_share_of_structure():
+    """每一段的重量 = 这一段里的驱动器 + 这一段里的东西 + 分到这一段的骨架、线和皮肤。"""
+    budget = close_core()
+    for segment in Segment:
+        parts = sum(part.total_kg for part in (*budget.actuators, *budget.items) if part.segment == segment)
+        expected = parts / segment_count(segment) + budget.spread_on_kg(segment)
+        assert budget.by_segment[segment] == pytest.approx(expected)
+
+
+def test_spread_mass_is_structure_wiring_and_skin():
+    """按比例分的重量就是骨架、线、皮肤三样。"""
+    budget = close_core()
+    expected = budget.by_category["骨架"] + budget.by_category["线"] + budget.by_category["皮肤、软外壳、外衣"]
+    assert budget.spread_kg == pytest.approx(expected)
+
+
+def test_battery_is_above_the_lumbar_joint_and_fallbacks_below():
+    """电池、电脑、液冷在胸和腹；超级电容、安全板、髋的制动器在骨盆；膝的制动器在大腿。"""
+    budget = close_core()
+    assert {item_for(budget, key).segment for key in ("battery", "computer", "cooling")} == {Segment.CHEST}
+    assert {item_for(budget, key).segment for key in ("supercapacitor", "safety_board", "hip_brake")} == {
+        Segment.PELVIS
+    }
+    assert item_for(budget, "knee_brake").segment == Segment.THIGH
+    assert item_for(budget, "battery").mass_each_kg == pytest.approx(5.0)
+
+
+def test_items_without_mass_are_not_listed():
+    """重量是 0 的东西不列：核心版的手在前臂里没有驱动；不要保底时没有制动器。"""
+    keys = {item.key for item in close_core().items}
+    assert "hand_drive" not in keys
+    assert "extra" not in keys
+    without_fallbacks = {item.key for item in close_core(replace(BASE, fallbacks=False)).items}
+    assert without_fallbacks.isdisjoint({"supercapacitor", "safety_board", "hip_brake", "knee_brake"})
+
+
+def test_all_tendon_hand_puts_its_drives_in_the_forearm():
+    """全肌腱的手：驱动放在前臂里，一侧 12 个绞盘共 1.44 kg。"""
+    budget = close_mass(replace(CORE_BODY, hand=HAND_ALL_TENDON), BASE, best_today_model())
+    drive = item_for(budget, "hand_drive")
+    assert drive.segment == Segment.FOREARM
+    assert drive.count == 2
+    assert drive.mass_each_kg == pytest.approx(1.44)
+
+
+def test_joint_peak_torques_follow_the_closed_mass():
+    """闭合以后每个关节的峰值力矩：腿的随体重放大，颈的不变，并联的一组每个自由度各算各的。"""
+    budget = close_core()
+    scale = budget.total_kg / 70.0
+    groups = {group.key: group for group in CORE_BODY.joint_groups()}
+    assert joint_peak_torques_nm(groups["knee"], BASE, budget) == pytest.approx((300.0 * scale,))
+    assert joint_peak_torques_nm(groups["ankle"], BASE, budget) == pytest.approx((250.0 * scale, 100.0 * scale))
+    assert joint_peak_torques_nm(groups["neck_upper"], BASE, budget) == pytest.approx((20.0, 20.0))
+    assert joint_peak_torques_nm(groups["shoulder_pitch"], BASE, budget) == pytest.approx((135.0,))
+
+
+def test_joint_peak_torques_of_fixed_mass_group_are_empty():
+    """按固定重量估的组没有力矩。"""
+    budget = close_mass(FULL_BODY, BASE, best_today_model())
+    eyes = next(group for group in FULL_BODY.joint_groups() if group.key == "eyes")
+    assert joint_peak_torques_nm(eyes, BASE, budget) == ()
 
 
 def test_fails_when_actuators_are_too_heavy_to_close():

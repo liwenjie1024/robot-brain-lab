@@ -31,6 +31,17 @@ CATEGORY_SKIN = "皮肤、软外壳、外衣"
 CATEGORY_SENSORS = "传感器"
 CATEGORY_FALLBACKS = "保底（超级电容、制动器、安全板）"
 CATEGORY_EXTRA = "额外带的东西"
+# 有固定位置的那几类。骨架、线、皮肤是另外按比例分的。
+_LOCATED_CATEGORIES: tuple[str, ...] = (
+    CATEGORY_ACTUATORS,
+    CATEGORY_HANDS,
+    CATEGORY_BATTERY,
+    CATEGORY_COMPUTER,
+    CATEGORY_COOLING,
+    CATEGORY_SENSORS,
+    CATEGORY_FALLBACKS,
+    CATEGORY_EXTRA,
+)
 
 
 class MassClosureError(RuntimeError):
@@ -119,8 +130,29 @@ class ActuatorLine:
 
 
 @dataclass(frozen=True)
+class FixedItem:
+    """放在固定地方的东西（不是关节的驱动器）：电池、电脑、手……count 是全身一共几个。"""
+
+    key: str
+    name: str
+    category: str
+    segment: Segment
+    count: int
+    mass_each_kg: float
+
+    @property
+    def total_kg(self) -> float:
+        """这样东西一共多重。"""
+        return self.count * self.mass_each_kg
+
+
+@dataclass(frozen=True)
 class MassBudget:
-    """闭合以后的质量。by_segment 是每一段一侧的重量。"""
+    """闭合以后的质量。by_segment 是每一段一侧的重量。
+
+    每一段的重量 = 这一段里的驱动器（actuators）+ 这一段里的东西（items）
+    + 分到这一段的骨架、线和皮肤（spread_kg 的一份）。
+    """
 
     variant_name: str
     model_name: str
@@ -128,8 +160,14 @@ class MassBudget:
     by_category: dict[str, float]
     by_segment: dict[Segment, float]
     actuators: tuple[ActuatorLine, ...]
+    items: tuple[FixedItem, ...]
+    spread_kg: float
     iterations: int = 0
     growth_per_added_kg: float = 0.0
+
+    def spread_on_kg(self, segment: Segment) -> float:
+        """骨架、线、皮肤分到这一段（一侧）的重量。它们没有固定的位置，按人各段的质量比例分。"""
+        return MASS_FRACTION[segment] * self.spread_kg
 
 
 def close_mass(variant: BodyVariant, assumptions: Assumptions, model: ActuatorMassModel) -> MassBudget:
@@ -138,6 +176,12 @@ def close_mass(variant: BodyVariant, assumptions: Assumptions, model: ActuatorMa
     heavier = _iterate(variant, assumptions, model, extra_kg=EXTRA_PROBE_KG)
     growth = (heavier.total_kg - budget.total_kg) / EXTRA_PROBE_KG
     return replace(budget, growth_per_added_kg=growth)
+
+
+def joint_peak_torques_nm(group: JointGroup, assumptions: Assumptions, budget: MassBudget) -> tuple[float, ...]:
+    """闭合以后，这组关节每个自由度要出的峰值力矩。按固定重量估的组返回空。"""
+    guess = _Guess(budget.total_kg, budget.by_segment)
+    return tuple(_required_torque_nm(group.torque_rule, torque, assumptions, guess) for torque in group.peak_torques_nm)
 
 
 @dataclass(frozen=True)
@@ -175,38 +219,22 @@ def _evaluate(
     lines = tuple(
         line for group in variant.joint_groups() for line in _actuator_lines(group, assumptions, model, guess)
     )
-    located = dict.fromkeys(Segment, 0.0)
-    for line in lines:
-        located[line.segment] += line.total_kg / segment_count(line.segment)
-    located[Segment.HAND] += variant.hand.hand_mass_kg
-    located[Segment.FOREARM] += variant.hand.forearm_drive_mass_kg
+    items = _fixed_items(variant, assumptions, extra_kg)
 
-    battery = assumptions.battery_kwh * WH_PER_KWH / assumptions.battery_wh_per_kg
-    cooling = assumptions.liquid_cooling_kg if assumptions.liquid_cooling else 0.0
-    hip_brakes = HIP_BRAKES_PER_BODY * assumptions.brake_kg if assumptions.fallbacks else 0.0
-    knee_brake = assumptions.brake_kg if assumptions.fallbacks else 0.0
-    torso_fallbacks = (assumptions.supercapacitor_kg + assumptions.safety_board_kg) if assumptions.fallbacks else 0.0
-    located[Segment.TORSO] += battery + assumptions.computer_kg + cooling + torso_fallbacks + hip_brakes + extra_kg
-    located[Segment.THIGH] += knee_brake
-    located[Segment.HEAD] += assumptions.sensors_kg
-
-    by_category = {
-        CATEGORY_ACTUATORS: sum(line.total_kg for line in lines),
-        CATEGORY_HANDS: HAND_COUNT * (variant.hand.hand_mass_kg + variant.hand.forearm_drive_mass_kg),
-        CATEGORY_BATTERY: battery,
-        CATEGORY_COMPUTER: assumptions.computer_kg,
-        CATEGORY_COOLING: cooling,
-        CATEGORY_SKIN: assumptions.skin_and_cover_kg,
-        CATEGORY_SENSORS: assumptions.sensors_kg,
-        CATEGORY_FALLBACKS: torso_fallbacks + hip_brakes + segment_count(Segment.THIGH) * knee_brake,
-        CATEGORY_EXTRA: extra_kg,
-    }
+    by_category = dict.fromkeys(_LOCATED_CATEGORIES, 0.0)
+    by_category[CATEGORY_ACTUATORS] = sum(line.total_kg for line in lines)
+    for item in items:
+        by_category[item.category] += item.total_kg
+    by_category[CATEGORY_SKIN] = assumptions.skin_and_cover_kg
     # 骨架和线按总重的比例算，所以总重 = 其它东西 ÷ (1 - 两个比例)。
     shared_fraction = assumptions.structure_fraction + assumptions.wiring_fraction
     total = sum(by_category.values()) / (1 - shared_fraction)
     by_category[CATEGORY_STRUCTURE] = assumptions.structure_fraction * total
     by_category[CATEGORY_WIRING] = assumptions.wiring_fraction * total
 
+    located = dict.fromkeys(Segment, 0.0)
+    for part in (*lines, *items):
+        located[part.segment] += part.total_kg / segment_count(part.segment)
     # 骨架、线、皮肤没有固定的位置，按人各段的质量比例分到各段。
     spread = by_category[CATEGORY_STRUCTURE] + by_category[CATEGORY_WIRING] + assumptions.skin_and_cover_kg
     by_segment = {segment: located[segment] + MASS_FRACTION[segment] * spread for segment in Segment}
@@ -217,7 +245,50 @@ def _evaluate(
         by_category=by_category,
         by_segment=by_segment,
         actuators=lines,
+        items=items,
+        spread_kg=spread,
     )
+
+
+def _fixed_items(variant: BodyVariant, assumptions: Assumptions, extra_kg: float) -> tuple[FixedItem, ...]:
+    """不是关节驱动器的东西，各放在哪一段、各多重（机体规格第 6 节）。重量是 0 的不列。"""
+    battery_kg = assumptions.battery_kwh * WH_PER_KWH / assumptions.battery_wh_per_kg
+    items = [
+        FixedItem("hand", "手", CATEGORY_HANDS, Segment.HAND, HAND_COUNT, variant.hand.hand_mass_kg),
+        FixedItem(
+            "hand_drive",
+            "前臂里给手用的驱动",
+            CATEGORY_HANDS,
+            Segment.FOREARM,
+            HAND_COUNT,
+            variant.hand.forearm_drive_mass_kg,
+        ),
+        FixedItem("battery", "电池", CATEGORY_BATTERY, Segment.CHEST, 1, battery_kg),
+        FixedItem("computer", "电脑", CATEGORY_COMPUTER, Segment.CHEST, 1, assumptions.computer_kg),
+        FixedItem("sensors", "传感器", CATEGORY_SENSORS, Segment.HEAD, 1, assumptions.sensors_kg),
+        FixedItem("extra", "额外带的东西", CATEGORY_EXTRA, Segment.CHEST, 1, extra_kg),
+    ]
+    if assumptions.liquid_cooling:
+        items.append(FixedItem("cooling", "液冷", CATEGORY_COOLING, Segment.CHEST, 1, assumptions.liquid_cooling_kg))
+    if assumptions.fallbacks:
+        items += [
+            FixedItem(
+                "supercapacitor", "超级电容", CATEGORY_FALLBACKS, Segment.PELVIS, 1, assumptions.supercapacitor_kg
+            ),
+            FixedItem("safety_board", "安全控制板", CATEGORY_FALLBACKS, Segment.PELVIS, 1, assumptions.safety_board_kg),
+            FixedItem(
+                "hip_brake", "髋的制动器", CATEGORY_FALLBACKS, Segment.PELVIS, HIP_BRAKES_PER_BODY, assumptions.brake_kg
+            ),
+            FixedItem(
+                "knee_brake",
+                "膝的制动器",
+                CATEGORY_FALLBACKS,
+                Segment.THIGH,
+                segment_count(Segment.THIGH),
+                assumptions.brake_kg,
+            ),
+        ]
+    return tuple(item for item in items if item.total_kg > 0)
 
 
 def _actuator_lines(
