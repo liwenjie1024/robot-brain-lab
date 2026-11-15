@@ -409,7 +409,7 @@ AI 只用在**训练那一端**：
 | SoundSpaces 2.0（波形级的声音仿真） | 没查 | **要确认** |
 | Newton（物理引擎） | 据第三方说是 Apache 2.0 | **要确认** |
 | RoboCasa、RoboCasa365（MuJoCo 上的家务仿真） | 代码 MIT；素材和数据 CC BY 4.0（要注明出处）；里面来自 Objaverse 的物品可能另有条款 | 可以；Objaverse 的物品**要逐个查** |
-| MuJoCo Menagerie 的 Unitree G1 模型（基线用） | BSD-3 | 可以 |
+| MuJoCo Menagerie 的 Unitree G1 模型（基线用） | BSD-3（2026-11-15 看过许可证的原文：版权是宇树的，可以改、可以商用，要留着版权声明） | 可以。版本和每个文件的指纹写在 `third_party/unitree_g1.json`，许可证的原文和模型一起下载 |
 | Egocentric-10K（人的第一人称视频） | 据第三方说是 Apache 2.0 | **要确认** |
 
 选模型和数据时，许可证和能力一起看。新加的东西先填这张表。考场和训练环境的素材也会进训练，一样要能商用（见 [Nova 考试](Nova考试.md) 2.6 节）。其它商用要求见 [商用要求](商用要求.md)。

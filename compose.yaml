@@ -10,6 +10,8 @@ services:
       context: .
       dockerfile: body/Dockerfile
     # 挂上源码：改了代码不用重新做镜像。挂上 docs：报告直接写进仓库。
+    # 挂上 third_party：外面来的东西（基线的模型）下载到这里，不做进镜像。
     volumes:
       - ./body:/app
       - ./docs:/docs
+      - ./third_party:/third_party

@@ -10,7 +10,8 @@
 
 from dataclasses import dataclass
 
-from nova_body.skeleton import AXIS_BACKWARD, AXIS_LEFT, AXIS_RIGHT, AXIS_UP, Side, Vector, mirror_point
+from nova_body.body import Side
+from nova_body.skeleton import AXIS_BACKWARD, AXIS_LEFT, AXIS_RIGHT, AXIS_UP, Vector, mirror_point
 
 
 @dataclass(frozen=True)

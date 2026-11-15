@@ -10,7 +10,8 @@
 - 每个驱动器是"位置 + 阻尼"的控制，代表驱动器里自己跑的阻抗环；刚度和阻尼以后可以在运行时改。
   摩擦、力矩-速度、发热到做驱动器的模型（1.6）时再建。
 - 身体的各段之间不算碰撞，只算和地面的碰撞。
-- 地面是一块平地，以后换成考场。
+
+地面、步长、关节位置控制的软硬是测试台定的（bench.py），对每个身体都一样。
 """
 
 import math
@@ -23,6 +24,15 @@ import numpy as np
 
 from nova_body.actuator_mass import ActuatorMassModel, best_today_model
 from nova_body.anthropometry import Segment, segment_count
+from nova_body.bench import (
+    add_floor,
+    add_joint_sensors,
+    damping_for,
+    stiffness_for,
+    store_stand_pose,
+    use_bench_settings,
+)
+from nova_body.body import SIDE_NAMES, Anatomy, Body, DrivenJoint, Imu, Leg, Side, StandPose
 from nova_body.design import CORE_BODY
 from nova_body.hand import (
     DIGITS,
@@ -39,15 +49,13 @@ from nova_body.hand import (
     from_hand,
 )
 from nova_body.mass_closure import Assumptions, MassBudget, close_mass, joint_peak_torques_nm
-from nova_body.posture import StandPose, solve_stand_pose
+from nova_body.posture import solve_stand_pose
 from nova_body.skeleton import (
     LINKS,
     ROOT_LINK,
-    SIDE_NAMES,
     Dimensions,
     Joint,
     Link,
-    Side,
     Vector,
     link,
     mirror_axis,
@@ -58,27 +66,23 @@ from nova_body.skeleton import (
 )
 
 MODEL_NAME = "nova_core"
-TIMESTEP_S = 0.001
+BODY_NAME = "Nova（核心版）"
 ROOT_JOINT = "root"
-FLOOR = "floor"
-STAND_KEY = "stand"
+TRUNK_LINK = "chest"
+FOOT_LINK = "foot"
+HIP_PITCH, KNEE, ANKLE_PITCH = "hip_pitch", "knee", "ankle_pitch"
 PELVIS_IMU = "pelvis_imu"
 HEAD_IMU = "head_imu"
 CHEST_DEPTH_CAMERA = "chest_depth_camera"
-IMU_SITES: tuple[str, ...] = (PELVIS_IMU, HEAD_IMU)
+# IMU 装在哪：模型里那个点的名字，和它在身体的哪里。
+IMU_SITES: dict[str, str] = {PELVIS_IMU: "骨盆", HEAD_IMU: "头"}
 
-POSITION_SUFFIX = "_pos"
-VELOCITY_SUFFIX = "_vel"
-TORQUE_SUFFIX = "_torque"
 ACCELERATION_SUFFIX = "_acc"
 GYRO_SUFFIX = "_gyro"
 FORCE_SUFFIX = "_force"
 MOMENT_SUFFIX = "_moment"
 CONTACT_SUFFIX = "_contact"
 
-# 关节的位置控制：偏了这么多弧度，驱动器就出全力；阻尼 = 刚度 x 这个时间。
-FULL_TORQUE_ERROR_RAD = 0.1
-DAMPING_TIME_S = 0.05
 # 电机转子折算到关节上的惯量，每 N·m 峰值力矩多少 kg·m²。和现有的低减速比关节同一个量级；
 # 做驱动器的模型（1.6）时按电机和减速比定。
 ARMATURE_PER_NM = 1.5e-4
@@ -88,9 +92,6 @@ HAND_ARMATURE = 3.0e-4
 HAND_PASSIVE_DAMPING = 5.0e-3
 FOLLOWER_ARMATURE = 5.0e-5
 
-# 接触的软硬：时间常数越小越硬，不能小于 2 个仿真步长。
-CONTACT_SOLREF = (0.005, 1.0)
-FLOOR_RGBA = (0.90, 0.90, 0.88, 1.0)
 SHELL_GROUP = 0
 PART_GROUP = 1
 
@@ -122,6 +123,21 @@ CHEST_DEPTH_HEIGHT_FRACTION = 0.8
 UP: Vector = (0.0, 0.0, 1.0)
 FORWARD: Vector = (1.0, 0.0, 0.0)
 PALM_ORIGIN: Vector = (0.0, 0.0, 0.0)
+
+_FINGERS = tuple(digit.key for digit in DIGITS if digit.key != "thumb")
+
+# 站着放松时各关节的角度（度），左右一样。没写的是 0。腿的三个关节由站姿来算。
+# 手臂稍微离开身体，手指微微弯着，这样没有关节顶在范围的边上。
+RELAXED_DEG: dict[str, float] = {
+    "shoulder_roll": 6.0,
+    "elbow": 12.0,
+    "palm_arch": 5.0,
+    "thumb_cmc_lift": 15.0,
+    "thumb_mcp_flex": 10.0,
+    "thumb_ip": 10.0,
+    **{f"{finger}_mcp_flex": 15.0 for finger in _FINGERS},
+    **{f"{finger}_pip": 25.0 for finger in _FINGERS},
+}
 
 
 class ModelError(RuntimeError):
@@ -200,31 +216,49 @@ class ModelJoint:
     @property
     def stiffness(self) -> float:
         """位置控制的刚度（N·m/rad）。没有驱动器的是 0。"""
-        return 0.0 if self.peak_torque_nm is None else self.peak_torque_nm / FULL_TORQUE_ERROR_RAD
+        return 0.0 if self.peak_torque_nm is None else stiffness_for(self.peak_torque_nm)
 
     @property
     def damping(self) -> float:
-        """位置控制的阻尼（N·m·s/rad）。"""
-        return self.stiffness * DAMPING_TIME_S
+        """位置控制的阻尼（N·m·s/rad）。没有驱动器的是 0。"""
+        return 0.0 if self.peak_torque_nm is None else damping_for(self.peak_torque_nm)
 
 
 @dataclass(frozen=True)
 class NovaModel:
-    """生成好的身体：MuJoCo 的模型，和它是按什么数据生成的。"""
+    """生成好的身体，和它是按什么数据生成的。
+
+    body 是交给测试台的那一份（模型、站姿、测试台要认得的地方）。
+    joints 是全部的关节，包括没有驱动器、跟着别的关节动的。
+    """
 
     spec: mujoco.MjSpec
-    model: mujoco.MjModel
+    body: Body
     budget: MassBudget
     assumptions: Assumptions
     dimensions: Dimensions
     joints: tuple[ModelJoint, ...]
     part_kinds: dict[str, PartKind]
-    stand: StandPose
+
+    @property
+    def model(self) -> mujoco.MjModel:
+        """MuJoCo 的模型。"""
+        return self.body.model
+
+    @property
+    def stand(self) -> StandPose:
+        """站姿。"""
+        return self.body.stand
 
     @property
     def actuated_joints(self) -> tuple[ModelJoint, ...]:
         """有驱动器的关节，顺序和模型里的驱动器一样。"""
         return tuple(joint for joint in self.joints if joint.peak_torque_nm is not None)
+
+
+def part_legend() -> tuple[tuple[str, tuple[float, float, float, float]], ...]:
+    """画图用的图例：每种颜色是什么东西。"""
+    return tuple((style.name, style.rgba) for style in PART_STYLES.values())
 
 
 def ankle_ft_site(side: Side) -> str:
@@ -259,19 +293,49 @@ def build_from_budget(budget: MassBudget, assumptions: Assumptions) -> NovaModel
 
     生成两遍：第一遍的模型用来算站姿（要知道重心在哪），第二遍把站姿存进模型里。
     """
-    stand = solve_stand_pose(_Builder(budget, assumptions).compile(stand=None))
+    anatomy = _anatomy()
+    stand = solve_stand_pose(_Builder(budget, assumptions).compile(stand=None), anatomy)
     builder = _Builder(budget, assumptions)
-    model = builder.compile(stand)
+    body = Body(
+        name=BODY_NAME,
+        model=builder.compile(stand),
+        anatomy=anatomy,
+        joints=tuple(
+            DrivenJoint(joint.name, joint.label, joint.lower_rad, joint.upper_rad, joint.peak_torque_nm)
+            for joint in builder.joints
+            if joint.peak_torque_nm is not None
+        ),
+        imus=tuple(Imu(place, site + ACCELERATION_SUFFIX, site + GYRO_SUFFIX) for site, place in IMU_SITES.items()),
+        stand=stand,
+        height_m=builder.dims.height,
+        foot_length_m=builder.dims.foot_length,
+        drawn_groups=(SHELL_GROUP, PART_GROUP),
+    )
     return NovaModel(
         spec=builder.spec,
-        model=model,
+        body=body,
         budget=budget,
         assumptions=assumptions,
         dimensions=builder.dims,
         joints=tuple(builder.joints),
         part_kinds=builder.kinds,
-        stand=stand,
     )
+
+
+def _anatomy() -> Anatomy:
+    """测试台要认得的地方：骨盆、胸、两条腿上的关节和脚底，站着时手臂和手放在哪。"""
+    legs = {
+        side: Leg(
+            hip_pitch=f"{side.value}_{HIP_PITCH}",
+            knee=f"{side.value}_{KNEE}",
+            ankle_pitch=f"{side.value}_{ANKLE_PITCH}",
+            foot=f"{side.value}_{FOOT_LINK}",
+            sole=sole_site(side),
+        )
+        for side in Side
+    }
+    relaxed = {f"{side.value}_{key}": math.radians(degrees) for side in Side for key, degrees in RELAXED_DEG.items()}
+    return Anatomy(root=ROOT_LINK, trunk=TRUNK_LINK, legs=legs, relaxed_rad=relaxed)
 
 
 def _placements(d: Dimensions) -> dict[tuple[Segment, str], tuple[Vector, ...]]:
@@ -358,10 +422,8 @@ class _Builder:
         self.spec.modelname = MODEL_NAME
         # MjSpec 的角度默认是度；这里全部用弧度。
         self.spec.compiler.degree = False
-        self.spec.option.timestep = TIMESTEP_S
-        # 驱动器的阻尼很大，要用把它算进去的积分方法才稳。
-        self.spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
-        self._add_floor()
+        use_bench_settings(self.spec)
+        add_floor(self.spec)
         self._add_bodies()
         self._add_drives()
         self._add_sensors()
@@ -369,21 +431,10 @@ class _Builder:
     def compile(self, stand: StandPose | None) -> mujoco.MjModel:
         """编译成模型。给了站姿就把它存成关键帧。"""
         if stand is not None:
-            self.spec.add_key(name=STAND_KEY, qpos=list(stand.qpos), ctrl=list(stand.ctrl))
+            store_stand_pose(self.spec, stand)
         return self.spec.compile()
 
     # 身体 -------------------------------------------------------------------------------------------
-
-    def _add_floor(self) -> None:
-        self.spec.worldbody.add_geom(
-            name=FLOOR,
-            type=mujoco.mjtGeom.mjGEOM_PLANE,
-            size=[0.0, 0.0, 1.0],
-            contype=0,
-            conaffinity=1,
-            solref=list(CONTACT_SOLREF),
-            rgba=list(FLOOR_RGBA),
-        )
 
     def _add_bodies(self) -> None:
         d = self.dims
@@ -714,7 +765,7 @@ class _Builder:
         self.kinds[name] = kind
 
     def _add_shell(self, body, label: str, mass: float, geom_type, **shape) -> None:
-        """加一块外壳：带着骨架、线、皮肤的质量，会和地面碰撞。"""
+        """加一块外壳：带着骨架、线、皮肤的质量，会和地面碰撞（碰撞的软硬和摩擦由地面定）。"""
         name = f"{body.name}.{label}"
         body.add_geom(
             name=name,
@@ -724,7 +775,6 @@ class _Builder:
             contype=1,
             conaffinity=0,
             group=SHELL_GROUP,
-            solref=list(CONTACT_SOLREF),
             **shape,
         )
         self.kinds[name] = PartKind.SHELL
@@ -736,11 +786,11 @@ class _Builder:
     # 传感器 -----------------------------------------------------------------------------------------
 
     def _add_sensors(self) -> None:
-        for joint in self.joints:
-            self._add_sensor(joint.name + POSITION_SUFFIX, mujoco.mjtSensor.mjSENS_JOINTPOS, joint.name)
-            self._add_sensor(joint.name + VELOCITY_SUFFIX, mujoco.mjtSensor.mjSENS_JOINTVEL, joint.name)
-            if joint.peak_torque_nm is not None:
-                self._add_sensor(joint.name + TORQUE_SUFFIX, mujoco.mjtSensor.mjSENS_ACTUATORFRC, joint.name)
+        add_joint_sensors(
+            self.spec,
+            joints=[joint.name for joint in self.joints],
+            driven=[joint.name for joint in self.joints if joint.peak_torque_nm is not None],
+        )
         for site in IMU_SITES:
             self._add_sensor(site + ACCELERATION_SUFFIX, mujoco.mjtSensor.mjSENS_ACCELEROMETER, site)
             self._add_sensor(site + GYRO_SUFFIX, mujoco.mjtSensor.mjSENS_GYRO, site)
@@ -768,9 +818,6 @@ class _Builder:
 
 
 _SENSOR_TARGETS = {
-    mujoco.mjtSensor.mjSENS_JOINTPOS: mujoco.mjtObj.mjOBJ_JOINT,
-    mujoco.mjtSensor.mjSENS_JOINTVEL: mujoco.mjtObj.mjOBJ_JOINT,
-    mujoco.mjtSensor.mjSENS_ACTUATORFRC: mujoco.mjtObj.mjOBJ_ACTUATOR,
     mujoco.mjtSensor.mjSENS_ACCELEROMETER: mujoco.mjtObj.mjOBJ_SITE,
     mujoco.mjtSensor.mjSENS_GYRO: mujoco.mjtObj.mjOBJ_SITE,
     mujoco.mjtSensor.mjSENS_FORCE: mujoco.mjtObj.mjOBJ_SITE,

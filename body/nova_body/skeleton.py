@@ -10,9 +10,9 @@
 """
 
 from dataclasses import dataclass
-from enum import StrEnum
 
 from nova_body.anthropometry import Segment, segment_length_m
+from nova_body.body import Side
 
 Vector = tuple[float, float, float]
 
@@ -21,16 +21,6 @@ AXIS_BACKWARD: Vector = (-1.0, 0.0, 0.0)
 AXIS_LEFT: Vector = (0.0, 1.0, 0.0)
 AXIS_RIGHT: Vector = (0.0, -1.0, 0.0)
 AXIS_UP: Vector = (0.0, 0.0, 1.0)
-
-
-class Side(StrEnum):
-    """身体的哪一侧。"""
-
-    LEFT = "left"
-    RIGHT = "right"
-
-
-SIDE_NAMES: dict[Side, str] = {Side.LEFT: "左", Side.RIGHT: "右"}
 
 
 def mirror_point(point: Vector, side: Side | None) -> Vector:

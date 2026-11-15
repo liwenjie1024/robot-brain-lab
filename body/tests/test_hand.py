@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from nova_body.body import Side
 from nova_body.design import HAND_IN_HAND
 from nova_body.hand import (
     DIGITS,
@@ -17,7 +18,6 @@ from nova_body.hand import (
     hand_joints,
     hand_mass_fractions_total,
 )
-from nova_body.skeleton import Side
 
 FINGERS = ("index", "middle", "ring", "little")
 

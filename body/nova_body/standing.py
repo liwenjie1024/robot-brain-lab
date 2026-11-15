@@ -1,26 +1,28 @@
-"""站着：在仿真里用关节的位置控制让 Nova 站住，量它站得怎么样。
+"""站着：在仿真里用关节的位置控制让一个身体站住，量它站得怎么样。对哪个身体都是同一套量法。
 
 这里只是每个关节顶在站姿的角度上，没有平衡的控制。被推了还能站住、会走，是下一阶段（P2）的事。
+量的都是仿真里真实的值（接触力、位置），不靠身体自己的传感器。
 """
 
 import copy
 import math
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import mujoco
 import numpy as np
 
+from nova_body.bench import FLOOR, STAND_KEY
+from nova_body.body import Anatomy, Body
 from nova_body.mass_closure import GRAVITY_M_S2
-from nova_body.model import FLOOR, STAND_KEY, NovaModel
-from nova_body.skeleton import ROOT_LINK, Side, Vector, sole_site
 
 STAND_SECONDS = 10.0
+PUSH_SECONDS = 5.0
 REALTIME_TEST_SECONDS = 2.0
 # 骨盆比开始时低到这个比例以下，或者歪了这么多度，就算倒了。
 FALLEN_HEIGHT_FRACTION = 0.7
 FALLEN_TILT_DEG = 45.0
-PUSHED_BODY = "chest"
 CONTACT_FORCE_SIZE = 6
 UPRIGHT_AXIS = 2
 
@@ -36,7 +38,7 @@ SUPPORT_FORCE_TOLERANCE = 0.005
 class Push:
     """推一下：在胸上加一个力（世界坐标，牛顿），从 start_s 开始，持续 duration_s。"""
 
-    force_n: Vector
+    force_n: tuple[float, float, float]
     start_s: float = 1.0
     duration_s: float = 0.5
 
@@ -66,6 +68,27 @@ class StandingResult:
     foot_length_m: float
 
 
+def push_of_weight(body: Body, share: float, direction: tuple[float, float, float]) -> Push:
+    """朝一个方向推，力是体重的 share 倍。按体重的比例推，轻的身体和重的身体受的才是同样分量的一推。"""
+    weight = body.mass_kg * GRAVITY_M_S2
+    return Push(tuple(share * weight * axis for axis in direction))
+
+
+def push_until_it_falls(
+    body: Body, direction: tuple[float, float, float], shares: Sequence[float], seconds: float = PUSH_SECONDS
+) -> list[tuple[float, StandingResult]]:
+    """从小到大一档一档地推（力是体重的 share 倍），推到倒了为止。返回推过的每一档和它的结果。"""
+    if not shares or any(share <= 0 for share in shares) or list(shares) != sorted(set(shares)):
+        raise ValueError("推力要从小到大排，每一档都大于 0，不能重复")
+    pushed = []
+    for share in shares:
+        result = simulate_standing(body, seconds, push_of_weight(body, share, direction))
+        pushed.append((share, result))
+        if result.fell:
+            break
+    return pushed
+
+
 def stood_well(result: StandingResult) -> bool:
     """站得合不合格：没倒，没歪，没塌，脚没滑，最后是静止的，地面托着的力等于体重。"""
     return (
@@ -79,17 +102,17 @@ def stood_well(result: StandingResult) -> bool:
 
 
 def simulate_standing(
-    nova: NovaModel, seconds: float = STAND_SECONDS, push: Push | None = None, *, controlled: bool = True
+    body: Body, seconds: float = STAND_SECONDS, push: Push | None = None, *, controlled: bool = True
 ) -> StandingResult:
     """从站姿开始仿真 seconds 秒。controlled 是 False 时驱动器不出力（用来确认是控制让它站住的）。"""
     if seconds <= 0:
         raise ValueError(f"仿真的时间必须大于 0，收到的是 {seconds}")
-    model = nova.model if controlled else _without_actuation(nova.model)
+    model = body.model if controlled else _without_actuation(body.model)
     data = standing_data(model)
-    root = model.body(ROOT_LINK).id
-    pushed = model.body(PUSHED_BODY).id
+    root = model.body(body.anatomy.root).id
+    pushed = model.body(body.anatomy.trunk).id
     start_height = float(data.xpos[root][UPRIGHT_AXIS])
-    start_soles = _sole_positions(model, data)
+    start_soles = _sole_positions(model, data, body.anatomy)
     max_tilt_deg, lowest = 0.0, start_height
     fell = False
     for _ in range(round(seconds / model.opt.timestep)):
@@ -102,8 +125,9 @@ def simulate_standing(
             fell = True
             break
     support, pressure_center = floor_support(model, data)
-    slips = np.linalg.norm((_sole_positions(model, data) - start_soles)[:, :UPRIGHT_AXIS], axis=1)
-    heel_forward = float(np.mean(_sole_positions(model, data)[:, 0])) - nova.dimensions.foot_length / 2
+    end_soles = _sole_positions(model, data, body.anatomy)
+    slips = np.linalg.norm((end_soles - start_soles)[:, :UPRIGHT_AXIS], axis=1)
+    heel_forward = float(np.mean(end_soles[:, 0])) - body.foot_length_m / 2
     return StandingResult(
         seconds=float(data.time),
         fell=fell,
@@ -112,9 +136,9 @@ def simulate_standing(
         foot_slip_m=float(slips.max()),
         end_joint_speed_rad_s=float(np.abs(data.qvel).max()),
         support_force_n=float(support),
-        weight_n=nova.budget.total_kg * GRAVITY_M_S2,
+        weight_n=body.mass_kg * GRAVITY_M_S2,
         pressure_center_from_heel_m=float(pressure_center[0]) - heel_forward,
-        foot_length_m=nova.dimensions.foot_length,
+        foot_length_m=body.foot_length_m,
     )
 
 
@@ -163,14 +187,15 @@ def pressure_center_from_ankle(force: np.ndarray, moment: np.ndarray, ankle_heig
     return float(forward), float(left)
 
 
-def measure_realtime_factor(nova: NovaModel, seconds: float = REALTIME_TEST_SECONDS) -> float:
+def measure_realtime_factor(body: Body, seconds: float = REALTIME_TEST_SECONDS) -> float:
     """仿真比实时快多少倍：仿真里的 seconds 秒，除以实际算了多久。"""
-    data = standing_data(nova.model)
-    steps = round(seconds / nova.model.opt.timestep)
+    model = body.model
+    data = standing_data(model)
+    steps = round(seconds / model.opt.timestep)
     start = time.perf_counter()
     for _ in range(steps):
-        mujoco.mj_step(nova.model, data)
-    return steps * nova.model.opt.timestep / (time.perf_counter() - start)
+        mujoco.mj_step(model, data)
+    return steps * model.opt.timestep / (time.perf_counter() - start)
 
 
 def _without_actuation(model: mujoco.MjModel) -> mujoco.MjModel:
@@ -186,5 +211,5 @@ def _tilt_deg(data: mujoco.MjData, body: int) -> float:
     return math.degrees(math.acos(max(-1.0, min(1.0, float(upright)))))
 
 
-def _sole_positions(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
-    return np.array([data.site_xpos[model.site(sole_site(side)).id] for side in Side])
+def _sole_positions(model: mujoco.MjModel, data: mujoco.MjData, anatomy: Anatomy) -> np.ndarray:
+    return np.array([data.site_xpos[model.site(leg.sole).id] for leg in anatomy.legs.values()])

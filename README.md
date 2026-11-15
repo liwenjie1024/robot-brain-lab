@@ -11,7 +11,9 @@
 docker compose run --rm body pytest                            # 身体的测试
 docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环，报告写进 docs/报告/质量闭环.md
 docker compose run --rm body python -m nova_body.model_report  # 生成身体的模型，站 10 秒，报告和图写进 docs/报告/身体模型.md
-.\scripts\check.ps1                                            # 提交前的检查
+docker compose run --rm body python -m nova_body.third_party   # 下载、核对基线的模型（Unitree G1，19.7 MB，不在仓库里）
+docker compose run --rm body python -m nova_body.baseline_report  # 基线和 Nova 同一套测试，报告和图写进 docs/报告/基线身体.md
+.\scripts\check.ps1                                            # 提交前的检查（第一步会把基线的模型准备好）
 ```
 
 计算和仿真只在 Docker 的 Linux 容器里跑。开发规则在 [CLAUDE.md](CLAUDE.md)。
@@ -21,6 +23,8 @@ docker compose run --rm body python -m nova_body.model_report  # 生成身体的
 | [P1 计划](docs/P1计划.md) | **现在做到哪了**：P1 的步骤、怎么算做完、进度；已经知道的结果；P1 以后的顺序 |
 | [质量闭环的报告](docs/报告/质量闭环.md) | 程序算出来的：核心版 78~97 kg，完整版 96~121 kg；每样东西加多少重量；驱动器的数据 |
 | [身体模型的报告](docs/报告/身体模型.md) | 程序生成的：核心版的身体（75 个自由度、67 个驱动器、78 kg）的图；在仿真里用关节控制站了 10 秒；各段的质量、每个关节的范围和力矩、传感器 |
+| [基线的报告](docs/报告/基线身体.md) | 程序生成的：现成的 Unitree G1（1.32 m、33 kg、29 个自由度）和 Nova 放上同一个测试台，同一套测试都过了；两个身体并排的图；站姿、站 10 秒、推一下的对比；G1 是从哪来的 |
+| [外面来的东西](third_party/README.md) | 不是我们自己做的文件（现在只有 G1 的模型）：清单在仓库里，文件按清单下载、核对 |
 | [技术栈](docs/技术栈.md) | 已经在用的技术和版本，为什么这样选 |
 | [Nova 考试](docs/Nova考试.md) | **最重要的衡量标准（v1.5）**：人能不能依靠 Nova。能力证明 + 家务可靠；主指标是两次要人帮忙之间隔多久；考场是仿真里的中国两室一厅（有楼梯）+ 体能场；家务分三批；裁判从仿真状态自动判分；先考基线、换引擎再考、判断上的安全 |
 | [核心和待证明](docs/核心和待证明.md) | **哪些是必须的（v1.0）**：每一项标上核心、待证明、保底或以后；P1 只做核心（核心的身体是 75 个自由度）；先用现成的身体（Unitree G1）当基线 |

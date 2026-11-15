@@ -9,6 +9,8 @@ import pytest
 
 from nova_body.actuator_mass import best_today_model, conservative_model
 from nova_body.anthropometry import Segment, segment_count
+from nova_body.bench import FLOOR, POSITION_SUFFIX, STAND_KEY, TIMESTEP_S
+from nova_body.body import Side
 from nova_body.design import CORE_BODY
 from nova_body.hand import DIGITS, hand_joints
 from nova_body.mass_closure import Assumptions, FixedItem, close_mass
@@ -16,15 +18,8 @@ from nova_body.model import (
     CHEST_DEPTH_CAMERA,
     CHEST_DEPTH_PITCH_DOWN_DEG,
     CONTACT_SUFFIX,
-    DAMPING_TIME_S,
     EYE_SPACING_M,
-    FLOOR,
-    FULL_TORQUE_ERROR_RAD,
-    POSITION_SUFFIX,
     ROOT_JOINT,
-    STAND_KEY,
-    TIMESTEP_S,
-    TORQUE_SUFFIX,
     ModelError,
     NovaModel,
     PartKind,
@@ -34,7 +29,7 @@ from nova_body.model import (
     tip_site,
     wrist_ft_site,
 )
-from nova_body.skeleton import EYE_HEIGHT_RATIO, LINKS, ROOT_LINK, Side, sides_of, sole_site
+from nova_body.skeleton import EYE_HEIGHT_RATIO, LINKS, ROOT_LINK, sides_of, sole_site
 from nova_body.standing import read_sensor, simulate_standing, standing_data, stood_well
 
 BODY_DOF = 31
@@ -99,12 +94,6 @@ def test_joint_list_matches_the_model(nova):
     assert names[0] == ROOT_JOINT
     assert names[1:] == [joint.name for joint in nova.joints]
     assert [model.actuator(index).name for index in range(model.nu)] == [joint.name for joint in nova.actuated_joints]
-
-
-def test_simulation_settings(nova):
-    """仿真每秒 1000 步，用把驱动器的阻尼算进去的积分方法。"""
-    assert nova.model.opt.timestep == TIMESTEP_S
-    assert nova.model.opt.integrator == mujoco.mjtIntegrator.mjINT_IMPLICITFAST
 
 
 def test_building_twice_gives_the_same_model():
@@ -198,17 +187,6 @@ def test_motor_limits_follow_the_mass_closure(nova):
     assert model.actuator("right_ankle_roll").forcerange == pytest.approx([-100 * scale, 100 * scale])
     assert model.actuator("neck_yaw").forcerange == pytest.approx([-20, 20])
     assert model.actuator("left_index_mcp_flex").forcerange == pytest.approx([-2.5, 2.5])
-
-
-def test_motors_are_position_servos_with_damping(nova):
-    """每个驱动器是位置控制：偏 0.1 弧度出全力，阻尼 = 刚度 x 0.05 秒；目标只能在关节的范围里。"""
-    model = nova.model
-    for index, joint in enumerate(nova.actuated_joints):
-        stiffness = joint.peak_torque_nm / FULL_TORQUE_ERROR_RAD
-        assert model.actuator_gainprm[index, 0] == pytest.approx(stiffness), joint.name
-        assert model.actuator_biasprm[index, 1] == pytest.approx(-stiffness), joint.name
-        assert model.actuator_biasprm[index, 2] == pytest.approx(-stiffness * DAMPING_TIME_S), joint.name
-        assert model.actuator_ctrlrange[index] == pytest.approx([joint.lower_rad, joint.upper_rad]), joint.name
 
 
 def test_joints_without_motor_follow_another_joint(nova):
@@ -315,7 +293,7 @@ def test_core_sensors_are_all_there(nova):
     assert counts == {
         int(mujoco.mjtSensor.mjSENS_JOINTPOS): 75,
         int(mujoco.mjtSensor.mjSENS_JOINTVEL): 75,
-        int(mujoco.mjtSensor.mjSENS_ACTUATORFRC): 67,
+        int(mujoco.mjtSensor.mjSENS_JOINTACTFRC): 67,
         int(mujoco.mjtSensor.mjSENS_ACCELEROMETER): 2,
         int(mujoco.mjtSensor.mjSENS_GYRO): 2,
         int(mujoco.mjtSensor.mjSENS_FORCE): 4,
@@ -336,21 +314,6 @@ def test_every_fingertip_and_segment_has_a_contact_sensor(nova):
     assert len(names) == 25
     for name in names:
         assert model.sensor(name).dim[0] == 3, name
-
-
-def test_joint_sensors_read_the_joint(nova):
-    """关节的位置传感器读到的就是关节的角度；力矩传感器读到的就是驱动器出的力矩。"""
-    model = nova.model
-    data = standing_data(model)
-    for _ in range(200):
-        mujoco.mj_step(model, data)
-    # 仿真走完一步以后，传感器里还是这一步开始时的值；再算一遍才是现在的。
-    mujoco.mj_forward(model, data)
-    for name in ("left_knee", "right_elbow", "lumbar_pitch"):
-        angle = data.qpos[model.joint(name).qposadr[0]]
-        assert read_sensor(model, data, name + POSITION_SUFFIX)[0] == pytest.approx(angle)
-        torque = data.actuator_force[model.actuator(name).id]
-        assert read_sensor(model, data, name + TORQUE_SUFFIX)[0] == pytest.approx(torque)
 
 
 def test_eyes_look_forward_from_eye_height(nova, zero_pose):
@@ -428,7 +391,7 @@ def test_other_bodies_in_the_family_also_stand(changes, actuators):
     other = build_nova(replace(Assumptions(), **changes), actuators())
     assert subtree_mass(other, ROOT_LINK) == pytest.approx(other.budget.total_kg, rel=1e-9)
     assert other.model.nu == BODY_DOF + 2 * HAND_MOTORS
-    assert stood_well(simulate_standing(other, 3.0))
+    assert stood_well(simulate_standing(other.body, 3.0))
 
 
 def test_taller_body_has_longer_legs_and_higher_stand_pose():

@@ -29,11 +29,15 @@ docs/            设计。规格（现在定下的）：机体规格、系统结
                  核心和待证明（P1 做哪些）、P1计划（步骤和进度）、技术栈、决定记录
                  research/（讨论的经过）、报告/（程序算出来的，不要手改）
 body/            身体：设计计算和模型生成。Python 3.13，只在 Linux 容器里跑
-                 nova_body: anthropometry（人体比例） actuator_mass（驱动器有多重） design（关节表）
+                 nova_body，Nova 自己的: anthropometry（人体比例） actuator_mass（驱动器有多重） design（关节表）
                  mass_closure（质量闭环：每一段、每个驱动器、每样东西多重） mass_report（报告）
                  skeleton（骨架：关节的转轴和范围、尺寸、左右镜像） hand（手的 22 个关节）
-                 posture（站姿） model（生成 MuJoCo 的模型：形状、东西放哪、驱动器、传感器、相机）
-                 standing（在仿真里站着、量结果） drawing（画成 SVG） model_report（报告）
+                 model（生成 MuJoCo 的模型：形状、东西放哪、驱动器、传感器、相机） model_report（报告）
+                 nova_body，每个身体共用的: body（测试台眼里的"一个身体"） bench（测试台：地面、步长、关节控制的软硬）
+                 posture（站姿） standing（在仿真里站着、推、量结果） drawing（画成 SVG）
+                 nova_body，基线: third_party（按清单下载、核对外面来的文件） baseline（把 Unitree G1 放上测试台）
+                 baseline_report（基线和 Nova 比的报告）
+third_party/     外面来的东西：清单（提交）和按清单下载的文件（不提交）。现在只有基线的模型 unitree_g1
 scripts/         本地检查（check.ps1）
 ```
 
@@ -43,7 +47,9 @@ scripts/         本地检查（check.ps1）
 docker compose run --rm body pytest                            # 身体的测试
 docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环，报告写进 docs/报告/质量闭环.md
 docker compose run --rm body python -m nova_body.model_report  # 生成身体的模型、站 10 秒，报告和图写进 docs/报告/身体模型.md
-.\scripts\check.ps1                                            # 提交前的检查：格式、规则、测试、报告和代码对得上
+docker compose run --rm body python -m nova_body.third_party   # 下载、核对基线的模型（已经有的只核对，不连网）
+docker compose run --rm body python -m nova_body.baseline_report  # 基线和 Nova 跑同一套测试，报告和图写进 docs/报告/基线身体.md
+.\scripts\check.ps1                                            # 提交前的检查：外面来的文件、格式、规则、测试、报告和代码对得上
 ```
 
 ## 规则
@@ -64,6 +70,20 @@ docker compose run --rm body python -m nova_body.model_report  # 生成身体的
   - 模型生成两遍：第一遍算站姿（要知道重心在哪），第二遍把站姿存成关键帧 `stand`。
   - 站姿的目标 = 关节的角度 + 顶住重力要的力矩 ÷ 刚度。只给角度的话身体会往下沉（力量减半的身体沉了 2°）。
   - 驱动器是"位置 + 阻尼"，积分用 implicitfast：阻尼很大，不这样算会不稳。以后要在运行时调软硬，就改模型里的 `actuator_gainprm`、`actuator_biasprm`。
+- **测试台和身体分开**（`bench.py`、`body.py`，为什么这样做）：Nova 和基线要比，结果只能差在身体上。
+  - 地面、步长、积分的方法、关节位置控制的软硬、站姿的算法、合格线，对每个身体都一样，只写在测试台这一处。
+    新的身体（比如 NVIDIA 的参考人形机器人）交出一个 `Body` 就行；测试台、站姿、画图的代码不许认身体是哪一个。
+  - 和地面的摩擦、软硬由地面定：地面的优先级（`priority`）比任何身体的形状都高。现成的模型会给自己的脚写摩擦和优先级。
+  - 站姿按动作写（膝弯、脚尖向上、髋向前抬）。每个身体的关节往哪边算正不一样（G1 的髋和踝跟 Nova 是反的），
+    所以先看转轴朝哪边，再定正负；不要直接往 qpos 里写带正负号的角度。
+  - 用到 `body` 这个 fixture 的测试，Nova 和基线各跑一遍，这就是"同一套测试"。新写的测试能通用的就用它；
+    只有一个身体才有的东西（Nova 的力传感器、手指）另外写。
+  - 比较时推力按体重的比例算（`push_of_weight`），不要用同样的牛顿数去推轻重差一倍的身体。
+- **基线的模型**（`baseline.py`、`third_party.py`）：文件不提交进仓库，按 `third_party/*.json` 的清单下载，每次用之前核对 SHA-256。
+  - 模型文件一个字都不改。身体本身（质量、关节、电机的峰值力矩、摩擦、形状）都用文件里的；
+    读进来以后只换测试台管的东西（地面、步长、软硬），加脚底的点和关节的传感器。有测试逐项对照文件原样的模型。
+  - 换版本、加新的模型：先查许可证（[AI 模型](docs/AI模型.md) 第 10 节），再写清单，看 `third_party/README.md`。
+  - 文件里的模型和代码以为的不一样（驱动器的个数、不是位置控制、不认识的关节）就报错，不要猜。
 - **MuJoCo 容易踩的坑**（都实测过）：
   - MjSpec 的角度默认是度，开头就设 `spec.compiler.degree = False`；但相机的 `fovy` 总是度。
   - `mj_step` 以后，`sensordata` 里是这一步**开始时**的值，比 `qpos` 早一步。要现在的值先 `mj_forward`。
@@ -72,7 +92,17 @@ docker compose run --rm body python -m nova_body.model_report  # 生成身体的
   - 力传感器（`force`、`torque`）量的是上一段给这一段的力，带着这一段自己的重量；力矩是绕传感器那个点的。
   - 脚底正好贴着地面时接触力是 0；身体先掉下去一点点（约 0.2 mm）地面才托住它。
   - 测"只有某处碰到"时，别让别的地方深深插进地面：那样整个身体被猛地往上推，要测的那个接触反而没有力。
-- 画图（`drawing.py`）不用显卡：把每个形状投影成多边形写成 SVG。加了新的形状（比如圆柱）要先教它怎么画，不然会报错。
+  - 改现成模型的驱动器：直接改 `gainprm[0]`（刚度）、`biasprm[1]`（负的刚度）、`biasprm[2]`（负的阻尼）。
+    文件里写的 `dampratio` 存成正的 `biasprm[2]`，编译时才换成阻尼；写成负数就是直接给阻尼。
+  - 关节上的力矩上限（`actuatorfrcrange`）限的是 `qfrc_actuator`，不是 `actuator_force`：G1 的膝出到顶时，后一个读到 3639 N·m，
+    实际只有 139。要看关节实际得到多大的力矩，看前一个；测试台的力矩传感器量的也是它（`jointactuatorfrc`）。
+  - `contact.friction` 是五个数（两个方向的滑动、转动、两个方向的滚动），`geom_friction` 是三个数。
+  - 两个形状碰在一起时，优先级高的那个定摩擦和软硬；一样高才取大的、取平均。
+  - 传感器的 `noise` 在 3.17 里只是一个记下来的数，仿真不会真的加噪声。
+  - 同一个名字加两次，`add_geom` 当场就报错；不用等到编译。`spec.compile()` 可以改了再编译一遍。
+- 画图（`drawing.py`）不用显卡：把每个形状投影成多边形写成 SVG，颜色用模型里写的。加了新的形状（比如圆柱）要先教它怎么画，不然会报错。
+  网格画成凸包。要看图渲染出来的样子（字有没有被挡住），用无界面的 Edge 截一张：
+  `msedge --headless=new --user-data-dir=<临时目录> --window-size=宽,高 --screenshot=<png> file:///<svg>`；应用里的浏览器不能看本地的文件。
 - 文档、画面、测试的说明、提交信息都用中文。代码里的名字用英文，注释用中文。
 - 每加一样东西，记下它加了多少重量：多带 1 kg，总重要加 1.7~2 kg（质量闭环的结果）。
 - 换行一律用 LF（`.gitattributes`）。PowerShell 脚本里有中文，文件开头要带 BOM，不然 Windows PowerShell 会读成乱码。

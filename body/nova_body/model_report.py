@@ -10,18 +10,13 @@ import sys
 from pathlib import Path
 
 from nova_body.anthropometry import SEGMENT_NAMES, Segment, segment_length_m
+from nova_body.bench import DAMPING_TIME_S, FULL_TORQUE_ERROR_RAD, TIMESTEP_S
+from nova_body.body import Side
 from nova_body.drawing import draw_body
 from nova_body.hand import hand_joints
 from nova_body.mass_closure import GRAVITY_M_S2
-from nova_body.model import (
-    DAMPING_TIME_S,
-    FULL_TORQUE_ERROR_RAD,
-    TIMESTEP_S,
-    ModelJoint,
-    NovaModel,
-    build_nova,
-)
-from nova_body.skeleton import LINKS, Side
+from nova_body.model import ModelJoint, NovaModel, build_nova, part_legend
+from nova_body.skeleton import LINKS
 from nova_body.standing import (
     MAX_END_SPEED_RAD_S,
     MAX_FOOT_SLIP_M,
@@ -54,7 +49,7 @@ PUSH_DIRECTIONS: tuple[tuple[str, tuple[float, float, float]], ...] = (
 def build_report(nova: NovaModel | None = None) -> str:
     """生成模型、做完全部的仿真，返回报告的全文。"""
     nova = nova or build_nova()
-    standing = simulate_standing(nova)
+    standing = simulate_standing(nova.body)
     sections = [
         _header(),
         _summary_section(nova, standing),
@@ -100,7 +95,7 @@ def _summary_section(nova: NovaModel, standing: StandingResult) -> str:
         f"| 驱动器 | {len(nova.actuated_joints)}（身体 {body_driven}，每只手 {hand_driven}；"
         f"每只手有 {hand_total - hand_driven} 个远指间跟着近指间动） |",
         f"| 身高 | {nova.dimensions.height:.2f} m |",
-        f"| 模型的总质量 | {_model_mass_kg(nova):.2f} kg（质量闭环算的是 {nova.budget.total_kg:.2f} kg） |",
+        f"| 模型的总质量 | {nova.body.mass_kg:.2f} kg（质量闭环算的是 {nova.budget.total_kg:.2f} kg） |",
         f"| 传感器 | {model.nsensor} 个，一共 {model.nsensordata} 个数；相机 {model.ncam} 台（还没有画面） |",
         f"| 用关节控制站 {STAND_SECONDS:g} 秒 | {verdict}：最多歪 {standing.max_tilt_deg:.2f}°，"
         f"骨盆低了 {standing.pelvis_drop_m * MM_PER_M:.1f} mm |",
@@ -176,14 +171,14 @@ def _standing_section(nova: NovaModel, standing: StandingResult) -> str:
 
 
 def _limp_row(nova: NovaModel) -> str:
-    limp = simulate_standing(nova, LIMP_SECONDS, controlled=False)
+    limp = simulate_standing(nova.body, LIMP_SECONDS, controlled=False)
     outcome = f"{limp.seconds:.2f} 秒后倒了" if limp.fell else f"{LIMP_SECONDS:g} 秒里没倒"
     return f"| 驱动器不出力 | {outcome} |"
 
 
 def _push_row(nova: NovaModel, force_n: float, label: str, direction: tuple[float, float, float]) -> str:
     push = Push(tuple(force_n * axis for axis in direction))
-    result = simulate_standing(nova, PUSH_SECONDS, push)
+    result = simulate_standing(nova.body, PUSH_SECONDS, push)
     outcome = "倒了" if result.fell else f"没倒，最多歪 {result.max_tilt_deg:.1f}°"
     return f"| 在胸上{label}推 {force_n:g} N、{push.duration_s:g} 秒 | {outcome} |"
 
@@ -285,10 +280,6 @@ def _limits_section() -> str:
     )
 
 
-def _model_mass_kg(nova: NovaModel) -> float:
-    return float(nova.model.body_subtreemass[nova.model.body(LINKS[0].key).id])
-
-
 def main(argv: list[str] | None = None) -> int:
     """命令行入口：生成模型，写报告和图，打印结论。"""
     parser = argparse.ArgumentParser(description="生成 Nova 的身体模型，站一站，写一份报告。")
@@ -299,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(report, encoding="utf-8", newline="\n")
     picture = arguments.output.with_suffix(".svg")
-    picture.write_text(draw_body(nova), encoding="utf-8", newline="\n")
+    picture.write_text(draw_body(nova.body, legend=part_legend()), encoding="utf-8", newline="\n")
     print(report[report.index("## 1.") : report.index("## 2.")].strip())
     print(f"\n报告写到了 {arguments.output}，图写到了 {picture}")
     return 0
