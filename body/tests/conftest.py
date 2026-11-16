@@ -6,6 +6,7 @@ import pytest
 from nova_body.baseline import load_g1
 from nova_body.body import Body
 from nova_body.model import NovaModel, build_nova
+from nova_sim.bodies import G1, NOVA, Choice
 
 
 @pytest.fixture(scope="session")
@@ -26,6 +27,12 @@ def body(request: pytest.FixtureRequest) -> Body:
     if request.param == "nova":
         return request.getfixturevalue("nova").body
     return request.getfixturevalue("g1")
+
+
+@pytest.fixture(scope="session")
+def choices(nova: NovaModel, g1: Body) -> dict[str, Choice]:
+    """能放上测试台的两个身体，都准备好了。"""
+    return {NOVA: Choice(NOVA, nova.body.name, nova.body), G1: Choice(G1, g1.name, g1)}
 
 
 @pytest.fixture

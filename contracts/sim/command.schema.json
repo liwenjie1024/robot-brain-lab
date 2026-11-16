@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "command.schema.json",
+  "title": "Command",
+  "description": "网页发给仿真的命令。每条都带一个编号，仿真做完以后按编号答复。范围以外的值不改成范围里的，直接拒绝。",
+  "oneOf": [
+    { "$ref": "#/$defs/Reset" },
+    { "$ref": "#/$defs/Pause" },
+    { "$ref": "#/$defs/Resume" },
+    { "$ref": "#/$defs/SetControl" },
+    { "$ref": "#/$defs/PushBody" },
+    { "$ref": "#/$defs/SelectBody" }
+  ],
+  "$defs": {
+    "Id": { "type": "integer", "minimum": 0, "description": "命令的编号，网页自己编" },
+    "Reset": {
+      "type": "object",
+      "description": "重新开始：回到站姿，时间归零",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": { "type": { "const": "reset" }, "id": { "$ref": "#/$defs/Id" } }
+    },
+    "Pause": {
+      "type": "object",
+      "description": "暂停",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": { "type": { "const": "pause" }, "id": { "$ref": "#/$defs/Id" } }
+    },
+    "Resume": {
+      "type": "object",
+      "description": "继续",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": { "type": { "const": "resume" }, "id": { "$ref": "#/$defs/Id" } }
+    },
+    "SetControl": {
+      "type": "object",
+      "description": "让驱动器出力（顶住站姿），或者松开",
+      "additionalProperties": false,
+      "required": ["type", "id", "on"],
+      "properties": {
+        "type": { "const": "control" },
+        "id": { "$ref": "#/$defs/Id" },
+        "on": { "type": "boolean" }
+      }
+    },
+    "PushBody": {
+      "type": "object",
+      "description": "在胸上推一下，推 0.5 秒",
+      "additionalProperties": false,
+      "required": ["type", "id", "direction", "share"],
+      "properties": {
+        "type": { "const": "push" },
+        "id": { "$ref": "#/$defs/Id" },
+        "direction": { "enum": ["forward", "backward", "left", "right"], "description": "往哪边推" },
+        "share": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.5,
+          "description": "力是体重的多少倍。最多一半"
+        }
+      }
+    },
+    "SelectBody": {
+      "type": "object",
+      "description": "换一个身体放上测试台",
+      "additionalProperties": false,
+      "required": ["type", "id", "body"],
+      "properties": {
+        "type": { "const": "body" },
+        "id": { "$ref": "#/$defs/Id" },
+        "body": { "type": "string", "description": "Scene 的 choices 里的记号" }
+      }
+    }
+  }
+}

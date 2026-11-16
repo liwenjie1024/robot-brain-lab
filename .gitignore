@@ -10,6 +10,8 @@ coverage/
 
 *.log
 .env
+# MuJoCo 遇到警告时自己写的记录（测试里故意弄坏数的那一条会写）。
+MUJOCO_LOG.TXT
 
 # 运行的结果（记录、试验的分数）。报告放在 docs/报告，那里是要提交的。
 /results/

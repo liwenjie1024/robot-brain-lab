@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scene.schema.json",
+  "title": "Scene",
+  "description": "一个身体放在测试台上的样子。网页按它画 3D 的身体、列出关节和每种感觉；网页不认身体是哪一个。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "body",
+    "name",
+    "choices",
+    "mass_kg",
+    "height_m",
+    "timestep_s",
+    "links",
+    "root",
+    "push_point",
+    "shapes",
+    "meshes",
+    "joints",
+    "imus",
+    "force_sensors",
+    "touch_sensors",
+    "feet",
+    "cameras"
+  ],
+  "properties": {
+    "body": {
+      "type": "string",
+      "description": "这个身体的记号。选身体的命令里用它"
+    },
+    "name": {
+      "type": "string",
+      "description": "这个身体的名字，给人看的"
+    },
+    "choices": {
+      "type": "array",
+      "description": "能放上测试台的身体",
+      "items": {
+        "$ref": "#/$defs/Choice"
+      }
+    },
+    "mass_kg": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "height_m": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "站直时的身高"
+    },
+    "timestep_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "仿真的步长"
+    },
+    "links": {
+      "type": "array",
+      "description": "身体的每一段在模型里的名字。状态里每一段的位置和姿态按这个顺序",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "root": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "骨盆是 links 里的第几个"
+    },
+    "push_point": {
+      "$ref": "#/$defs/PushPoint"
+    },
+    "shapes": {
+      "type": "array",
+      "description": "要画的每一个形状，长在哪一段上",
+      "items": {
+        "$ref": "#/$defs/Shape"
+      }
+    },
+    "meshes": {
+      "type": "array",
+      "description": "用到的网格。点和面从 /mesh/{id} 拿",
+      "items": {
+        "$ref": "#/$defs/Mesh"
+      }
+    },
+    "joints": {
+      "type": "array",
+      "description": "有驱动器的关节。状态里关节的角度、速度、力矩按这个顺序",
+      "items": {
+        "$ref": "#/$defs/Joint"
+      }
+    },
+    "imus": {
+      "type": "array",
+      "description": "IMU。状态里的 imus 按这个顺序",
+      "items": {
+        "$ref": "#/$defs/Labelled"
+      }
+    },
+    "force_sensors": {
+      "type": "array",
+      "description": "六轴力传感器。状态里的 forces 按这个顺序",
+      "items": {
+        "$ref": "#/$defs/Labelled"
+      }
+    },
+    "touch_sensors": {
+      "type": "array",
+      "description": "量接触力的地方。状态里的 touches 按这个顺序",
+      "items": {
+        "$ref": "#/$defs/Labelled"
+      }
+    },
+    "feet": {
+      "type": "array",
+      "description": "两只脚。状态里的 feet 按这个顺序",
+      "items": {
+        "$ref": "#/$defs/Foot"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "cameras": {
+      "type": "array",
+      "description": "身体上的相机：从它那里看出去是什么样",
+      "items": {
+        "$ref": "#/$defs/Camera"
+      }
+    }
+  },
+  "$defs": {
+    "Vector": {
+      "type": "array",
+      "description": "三个数：x 朝前、y 朝左、z 朝上（米，或者牛顿、牛·米）",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "Quaternion": {
+      "type": "array",
+      "description": "姿态，四个数：w、x、y、z",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "Color": {
+      "type": "array",
+      "description": "颜色，四个数：红、绿、蓝、不透明的程度，都在 0~1",
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "Choice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body",
+        "name",
+        "available",
+        "reason"
+      ],
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "available": {
+          "type": "boolean",
+          "description": "现在能不能选"
+        },
+        "reason": {
+          "type": "string",
+          "description": "不能选的时候说为什么；能选的时候是空的"
+        }
+      }
+    },
+    "Shape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "kind",
+        "size",
+        "position",
+        "orientation",
+        "color",
+        "mesh"
+      ],
+      "properties": {
+        "link": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "长在 links 里的第几段上"
+        },
+        "kind": {
+          "enum": [
+            "box",
+            "sphere",
+            "capsule",
+            "ellipsoid",
+            "mesh"
+          ]
+        },
+        "size": {
+          "$ref": "#/$defs/Vector"
+        },
+        "position": {
+          "$ref": "#/$defs/Vector"
+        },
+        "orientation": {
+          "$ref": "#/$defs/Quaternion"
+        },
+        "color": {
+          "$ref": "#/$defs/Color"
+        },
+        "mesh": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "网格的编号；不是网格就是 null"
+        }
+      },
+      "description": "size：盒子：三条半边。球：半径、0、0。胶囊：半径、半长、0。椭球：三个半径。网格：不用；position：在这一段里的位置；orientation：在这一段里的姿态"
+    },
+    "Mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "vertices",
+        "faces"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vertices": {
+          "type": "integer",
+          "minimum": 3,
+          "description": "有多少个点"
+        },
+        "faces": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "有多少个三角形"
+        }
+      }
+    },
+    "Joint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "label",
+        "region",
+        "lower_rad",
+        "upper_rad",
+        "peak_torque_nm"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "在模型里的名字"
+        },
+        "label": {
+          "type": "string",
+          "description": "给人看的名字，比如 左 膝"
+        },
+        "region": {
+          "enum": [
+            "腿",
+            "腰",
+            "颈",
+            "手臂",
+            "手"
+          ],
+          "description": "在身体的哪一部分"
+        },
+        "lower_rad": {
+          "type": "number"
+        },
+        "upper_rad": {
+          "type": "number"
+        },
+        "peak_torque_nm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "驱动器最多出多大的力矩"
+        }
+      }
+    },
+    "Labelled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "给人看的名字：装在哪"
+        }
+      }
+    },
+    "Foot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "link",
+        "sole",
+        "length_m",
+        "width_m"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "link": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "脚是 links 里的第几段"
+        },
+        "sole": {
+          "$ref": "#/$defs/Vector"
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "脚底着地的那一块有多长"
+        },
+        "width_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "脚底着地的那一块有多宽"
+        }
+      },
+      "description": "sole：脚底的正中间在这一段里的位置"
+    },
+    "Camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "link",
+        "position",
+        "orientation",
+        "fovy_deg"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "link": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "装在 links 里的第几段上"
+        },
+        "position": {
+          "$ref": "#/$defs/Vector"
+        },
+        "orientation": {
+          "$ref": "#/$defs/Quaternion"
+        },
+        "fovy_deg": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 180,
+          "description": "竖直方向的视角"
+        }
+      },
+      "description": "orientation：相机朝自己的 -z 看，y 是画面的上方"
+    },
+    "PushPoint": {
+      "type": "object",
+      "description": "推一下的时候，力加在哪：胸这一段的重心。position 是它在这一段里的位置",
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "position"
+      ],
+      "properties": {
+        "link": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "胸是 links 里的第几段"
+        },
+        "position": {
+          "$ref": "#/$defs/Vector"
+        }
+      }
+    }
+  }
+}

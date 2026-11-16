@@ -19,7 +19,7 @@
 3. **测试**
    - 加功能、改功能，测试一起写。
    - 重要的功能（质量和身体的计算、关节控制、停止和安全、判分、计划）要测：正常、边界值、失败、重复和顺序颠倒。
-   - 测试的说明用中文写（pytest 用 docstring 和 ids）。
+   - 测试的说明用中文写（pytest 用 docstring 和 ids，vitest 用 describe 和 it 的名字）。
    - 身体的测试要真的跑物理（站、走、抓）。数要实测以后再定。
 
 ## 结构
@@ -37,8 +37,16 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  posture（站姿） standing（在仿真里站着、推、量结果） drawing（画成 SVG）
                  nova_body，基线: third_party（按清单下载、核对外面来的文件） baseline（把 Unitree G1 放上测试台）
                  baseline_report（基线和 Nova 比的报告）
+                 nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
+                 live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
+contracts/       规约（JSON Schema），只写在这一处：sim/ 里是仿真和网页之间的三种东西：scene（身体的样子）、
+                 message（招呼、状态、答复）、command（命令）。仿真（jsonschema）和网页（ajv）用同一份文件检查
+view/            网页：Vue 3 + TypeScript + Naive UI + three.js，直接在这台电脑上跑（Node.js，端口 5280）
+                 sim/（连接 link、检查 contracts、网格 meshes、画面上的数多久换 display、算出来的 derive、总的 useSim）
+                 stage/（3D：figure 搭身体和摆姿势，stage 碰显卡） components/（画面的各块） text/（数和状态的写法）
+                 generated/（照规约生成的类型，不手改） test/（测试用的样本，从真的仿真里抓的）
 third_party/     外面来的东西：清单（提交）和按清单下载的文件（不提交）。现在只有基线的模型 unitree_g1
-scripts/         本地检查（check.ps1）
+scripts/         本地检查（check.ps1）、打开网页（view.ps1）
 ```
 
 ## 常用命令
@@ -49,7 +57,12 @@ docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环
 docker compose run --rm body python -m nova_body.model_report  # 生成身体的模型、站 10 秒，报告和图写进 docs/报告/身体模型.md
 docker compose run --rm body python -m nova_body.third_party   # 下载、核对基线的模型（已经有的只核对，不连网）
 docker compose run --rm body python -m nova_body.baseline_report  # 基线和 Nova 跑同一套测试，报告和图写进 docs/报告/基线身体.md
-.\scripts\check.ps1                                            # 提交前的检查：外面来的文件、格式、规则、测试、报告和代码对得上
+.\scripts\check.ps1                                            # 提交前的检查：外面来的文件、格式、规则、测试、报告和代码对得上、网页
+.\scripts\view.ps1                                             # 打开网页：启动仿真（容器）和网页的服务，再打开浏览器
+docker compose up -d sim                                       # 只启动实时的仿真（http://127.0.0.1:8870）。改了 Python 代码要 docker compose restart sim
+npm --prefix view run contracts                                # 改了 contracts/ 里的规约以后，重新生成网页用的类型
+npm --prefix view run fixtures                                 # 改了规约或身体以后，从开着的仿真里重新抓网页测试用的样本
+npm --prefix view run test                                     # 网页的测试（lint、build 也是这样跑）
 ```
 
 ## 规则
@@ -84,6 +97,22 @@ docker compose run --rm body python -m nova_body.baseline_report  # 基线和 No
     读进来以后只换测试台管的东西（地面、步长、软硬），加脚底的点和关节的传感器。有测试逐项对照文件原样的模型。
   - 换版本、加新的模型：先查许可证（[AI 模型](docs/AI模型.md) 第 10 节），再写清单，看 `third_party/README.md`。
   - 文件里的模型和代码以为的不一样（驱动器的个数、不是位置控制、不认识的关节）就报错，不要猜。
+- **实时的仿真和网页**（`nova_sim`、`view`，为什么这样做）：
+  - **一直开着的仿真不会自己读改过的代码。** 测试（`docker compose run`）每次是新的容器所以能过，
+    网页连着的那个要 `docker compose restart sim` 才是新代码。改了规约、改了身体也一样。
+  - 规约只写在 `contracts/sim/*.schema.json`。改了以后：`npm --prefix view run contracts` 重新生成类型（生成的文件要提交），
+    重启仿真，`npm --prefix view run fixtures` 重新抓样本。规约里"引用"的旁边不要写说明（写在上一层），不然生成的类型会多出 Vector1、Vector2。
+  - 网页发来的命令先照规约检查再做；范围以外的值直接拒绝、说为什么，不改成范围里的。做完命令再答复。
+  - 仿真只在一个循环里往前走，命令也在这个循环里做。没有网页连着的时候它停着不算。
+  - 只让我们自己的网页（`http://127.0.0.1:5280`、`http://localhost:5280`）连上来发命令；两个端口都只在这台电脑自己上开。
+  - 网页不认身体是哪一个：只照仿真给的"样子"画，有什么感觉就列什么。给身体加一种感觉，要加进 `Body` 的清单、规约和网页三处。
+  - 画面上的数隔 0.1 秒换一次，重要的变化（倒了、暂停了……）马上换；3D 用每一条状态。
+  - **Naive UI 的折叠面板（NCollapse）里的内容不跟着状态更新**（表格停在刚打开时的数上）。会一直变的内容用浏览器自带的 `<details>`。
+  - 画面上的字、状态的叫法只写在 `view/src/text`。命令的函数别叫 `push`（代码检查会当成在改数组）。
+  - 用预览工具的 `preview_start` 按名字启动，启动的是上一个项目的画面（它读的是 `main` 那个目录的配置）。
+    Nova 的网页这样开：后台直接运行 `node view/node_modules/vite/bin/vite.js view --port 5280 --strictPort --host 127.0.0.1`，
+    再用 `preview_start` 的 `url` 打开 `http://127.0.0.1:5280`。预览的那一栏很窄，截图看不清；
+    要一张清楚的整页截图：`node view/scripts/screenshot.mjs <输出.png> [--body g1]`（仿真和网页要先开着；用无界面的 Edge 等几秒再拍）。
 - **MuJoCo 容易踩的坑**（都实测过）：
   - MjSpec 的角度默认是度，开头就设 `spec.compiler.degree = False`；但相机的 `fovy` 总是度。
   - `mj_step` 以后，`sensordata` 里是这一步**开始时**的值，比 `qpos` 早一步。要现在的值先 `mj_forward`。
@@ -100,6 +129,8 @@ docker compose run --rm body python -m nova_body.baseline_report  # 基线和 No
   - 两个形状碰在一起时，优先级高的那个定摩擦和软硬；一样高才取大的、取平均。
   - 传感器的 `noise` 在 3.17 里只是一个记下来的数，仿真不会真的加噪声。
   - 同一个名字加两次，`add_geom` 当场就报错；不用等到编译。`spec.compile()` 可以改了再编译一遍。
+  - 仿真算出了"不是数"的时候，MuJoCo 自己悄悄回到零位接着走，只留一条警告（`data.warning`）和一个 `MUJOCO_LOG.TXT`。
+    所以实时的仿真每一步都看这几条警告，有了就停下、说出来。
 - 画图（`drawing.py`）不用显卡：把每个形状投影成多边形写成 SVG，颜色用模型里写的。加了新的形状（比如圆柱）要先教它怎么画，不然会报错。
   网格画成凸包。要看图渲染出来的样子（字有没有被挡住），用无界面的 Edge 截一张：
   `msedge --headless=new --user-data-dir=<临时目录> --window-size=宽,高 --screenshot=<png> file:///<svg>`；应用里的浏览器不能看本地的文件。

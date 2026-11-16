@@ -7,7 +7,11 @@
 
 **现在在做 P1（身体）。** 进度看 [P1 计划](docs/P1计划.md)。
 
+**想看一眼：** 打开 Docker Desktop，在仓库里运行 `.\scripts\view.ps1`，浏览器会打开一个网页：
+Nova 站在测试台上，可以转着看、推一下、松开驱动器、换成基线的身体（Unitree G1）；关节的力矩、脚底的力、每种感觉的数都在变。
+
 ```powershell
+.\scripts\view.ps1                                             # 打开网页：启动仿真和网页的服务，再打开浏览器（Ctrl+C 停掉）
 docker compose run --rm body pytest                            # 身体的测试
 docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环，报告写进 docs/报告/质量闭环.md
 docker compose run --rm body python -m nova_body.model_report  # 生成身体的模型，站 10 秒，报告和图写进 docs/报告/身体模型.md
@@ -16,7 +20,7 @@ docker compose run --rm body python -m nova_body.baseline_report  # 基线和 No
 .\scripts\check.ps1                                            # 提交前的检查（第一步会把基线的模型准备好）
 ```
 
-计算和仿真只在 Docker 的 Linux 容器里跑。开发规则在 [CLAUDE.md](CLAUDE.md)。
+计算和仿真只在 Docker 的 Linux 容器里跑；网页的服务直接在这台电脑上跑（要 Node.js）。开发规则在 [CLAUDE.md](CLAUDE.md)。
 
 | 文档 | 内容 |
 |---|---|

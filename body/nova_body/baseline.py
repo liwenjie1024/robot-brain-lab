@@ -24,7 +24,7 @@ from nova_body.bench import (
     store_stand_pose,
     use_bench_settings,
 )
-from nova_body.body import SIDE_NAMES, Anatomy, Body, DrivenJoint, Imu, Leg, Side
+from nova_body.body import SIDE_NAMES, Anatomy, Body, DrivenJoint, Imu, Leg, Region, Side
 from nova_body.posture import solve_stand_pose
 from nova_body.third_party import MANIFEST_SUFFIX, THIRD_PARTY_DIR, Manifest, load_manifest, require
 
@@ -78,6 +78,18 @@ JOINT_LABELS: dict[str, str] = {
 }
 
 
+# 关节在身体的哪一部分，看它名字的第一个词。
+JOINT_REGIONS: dict[str, Region] = {
+    "hip": Region.LEG,
+    "knee": Region.LEG,
+    "ankle": Region.LEG,
+    "waist": Region.WAIST,
+    "shoulder": Region.ARM,
+    "elbow": Region.ARM,
+    "wrist": Region.ARM,
+}
+
+
 class BaselineError(RuntimeError):
     """文件里的模型和这里以为的不一样（比如换了一个版本）。"""
 
@@ -104,7 +116,7 @@ def put_on_bench(spec: mujoco.MjSpec) -> Body:
     add_floor(spec)
     _keep_published_stand(spec)
     joints = _use_bench_drives(spec)
-    foot_lengths = {side: _add_sole(spec, side) for side in Side}
+    soles = [_add_sole(spec, side) for side in Side]
     names = [joint.name for joint in joints]
     add_joint_sensors(spec, joints=names, driven=names)
 
@@ -122,7 +134,8 @@ def put_on_bench(spec: mujoco.MjSpec) -> Body:
         imus=IMUS,
         stand=stand,
         height_m=_zero_pose_height(model, anatomy),
-        foot_length_m=min(foot_lengths.values()),
+        foot_length_m=min(length for length, _ in soles),
+        foot_width_m=min(width for _, width in soles),
         drawn_groups=(VISUAL_GROUP,),
     )
 
@@ -142,13 +155,25 @@ def joint_name(kind: str, side: Side | None = None) -> str:
 
 def joint_label(name: str) -> str:
     """关节的中文名，比如"左 膝"。不认识的关节报错。"""
+    kind, side = _kind_and_side(name)
+    return JOINT_LABELS[kind] if side is None else f"{SIDE_NAMES[side]} {JOINT_LABELS[kind]}"
+
+
+def joint_region(name: str) -> Region:
+    """关节在身体的哪一部分。不认识的关节报错。"""
+    kind, _ = _kind_and_side(name)
+    return JOINT_REGIONS[kind.split("_")[0]]
+
+
+def _kind_and_side(name: str) -> tuple[str, Side | None]:
+    """把关节的名字拆开：是哪种关节（比如 hip_pitch），在哪一侧（腰的关节没有左右）。"""
     kind = name.removesuffix(JOINT_SUFFIX)
     side = next((side for side in Side if kind.startswith(f"{side.value}_")), None)
     if side is not None:
         kind = kind.removeprefix(f"{side.value}_")
-    if kind not in JOINT_LABELS:
+    if kind not in JOINT_LABELS or kind.split("_")[0] not in JOINT_REGIONS:
         raise BaselineError(f"不认识的关节：{name}")
-    return JOINT_LABELS[kind] if side is None else f"{SIDE_NAMES[side]} {JOINT_LABELS[kind]}"
+    return kind, side
 
 
 def _keep_published_stand(spec: mujoco.MjSpec) -> None:
@@ -176,12 +201,21 @@ def _use_bench_drives(spec: mujoco.MjSpec) -> tuple[DrivenJoint, ...]:
         actuator.biasprm[STIFFNESS_BIAS] = -stiffness_for(peak_torque)
         actuator.biasprm[DAMPING_BIAS] = -damping_for(peak_torque)
         lower, upper = (float(limit) for limit in joint.range)
-        joints.append(DrivenJoint(joint.name, joint_label(joint.name), lower, upper, peak_torque))
+        joints.append(
+            DrivenJoint(
+                name=joint.name,
+                label=joint_label(joint.name),
+                region=joint_region(joint.name),
+                lower_rad=lower,
+                upper_rad=upper,
+                peak_torque_nm=peak_torque,
+            )
+        )
     return tuple(joints)
 
 
-def _add_sole(spec: mujoco.MjSpec, side: Side) -> float:
-    """在脚底的正中间加一个点。返回脚底着地的那一段有多长。
+def _add_sole(spec: mujoco.MjSpec, side: Side) -> tuple[float, float]:
+    """在脚底的正中间加一个点。返回脚底着地的那一块有多长、多宽。
 
     G1 的脚用几个小球和地面接触。脚底就是这些小球的最低处，正中间是它们前后、左右的正中间。
     """
@@ -193,7 +227,7 @@ def _add_sole(spec: mujoco.MjSpec, side: Side) -> float:
     highest = np.max([np.asarray(ball.pos) + ball.size[0] for ball in balls], axis=0)
     middle = (lowest + highest) / 2
     foot.add_site(name=_sole(side), pos=[middle[0], middle[1], lowest[UP_AXIS]])
-    return float(highest[0] - lowest[0])
+    return float(highest[0] - lowest[0]), float(highest[1] - lowest[1])
 
 
 def _sole(side: Side) -> str:

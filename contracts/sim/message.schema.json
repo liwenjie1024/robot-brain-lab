@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "message.schema.json",
+  "title": "Message",
+  "description": "仿真发给网页的消息：刚连上时的招呼、不停发来的状态、对命令的答复。",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Hello"
+    },
+    {
+      "$ref": "#/$defs/State"
+    },
+    {
+      "$ref": "#/$defs/Ack"
+    }
+  ],
+  "$defs": {
+    "Vector": {
+      "type": "array",
+      "description": "三个数：x 朝前、y 朝左、z 朝上",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "Hello": {
+      "type": "object",
+      "description": "刚连上时发一次：现在测试台上是哪个身体",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "body",
+        "episode"
+      ],
+      "properties": {
+        "type": {
+          "const": "hello"
+        },
+        "body": {
+          "type": "string"
+        },
+        "episode": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "State": {
+      "type": "object",
+      "description": "这一刻的状态。位置、力都是世界坐标（地面是 z = 0）",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "body",
+        "episode",
+        "time_s",
+        "running",
+        "controlled",
+        "fallen",
+        "speed",
+        "problem",
+        "link_positions",
+        "link_orientations",
+        "joints",
+        "imus",
+        "forces",
+        "touches",
+        "feet",
+        "support_n",
+        "pressure_center",
+        "center_of_mass",
+        "tilt_deg",
+        "pelvis_height_m",
+        "push"
+      ],
+      "properties": {
+        "type": {
+          "const": "state"
+        },
+        "body": {
+          "type": "string",
+          "description": "哪个身体。和网页手里的 Scene 不一样时，网页要重新拿 Scene"
+        },
+        "episode": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "第几回。每次重新开始、换身体都加 1，网页靠它认出\"这是新的一回\""
+        },
+        "time_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "这一回里仿真过了多久"
+        },
+        "running": {
+          "type": "boolean",
+          "description": "仿真在走，还是暂停着"
+        },
+        "controlled": {
+          "type": "boolean",
+          "description": "驱动器在出力，还是松开了"
+        },
+        "fallen": {
+          "type": "boolean",
+          "description": "这一回里倒过没有"
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0,
+          "description": "仿真是实时的多少倍。1 就是和钟一样快"
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "仿真出了问题时说是什么；没有问题是 null"
+        },
+        "link_positions": {
+          "type": "array",
+          "description": "每一段的位置，连着排：x、y、z、x、y、z……顺序和 Scene 的 links 一样",
+          "items": {
+            "type": "number"
+          }
+        },
+        "link_orientations": {
+          "type": "array",
+          "description": "每一段的姿态，连着排：w、x、y、z……顺序和 Scene 的 links 一样",
+          "items": {
+            "type": "number"
+          }
+        },
+        "joints": {
+          "$ref": "#/$defs/JointReadings"
+        },
+        "imus": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ImuReading"
+          }
+        },
+        "forces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ForceReading"
+          }
+        },
+        "touches": {
+          "type": "array",
+          "description": "每一处受到的接触力（牛顿）",
+          "items": {
+            "$ref": "#/$defs/Vector"
+          }
+        },
+        "feet": {
+          "type": "array",
+          "description": "地面托着每只脚的力。这是从仿真里直接量的，不是身体的传感器读的",
+          "items": {
+            "$ref": "#/$defs/FootSupport"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "support_n": {
+          "type": "number",
+          "minimum": 0,
+          "description": "地面一共托着多大的力"
+        },
+        "pressure_center": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Vector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "压力中心。没有东西碰着地面时是 null"
+        },
+        "center_of_mass": {
+          "$ref": "#/$defs/Vector"
+        },
+        "tilt_deg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "骨盆歪了多少度"
+        },
+        "pelvis_height_m": {
+          "type": "number"
+        },
+        "push": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Push"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "正在推的那一下。没有在推是 null"
+        }
+      }
+    },
+    "JointReadings": {
+      "type": "object",
+      "description": "每个关节的读数，顺序和 Scene 的 joints 一样",
+      "additionalProperties": false,
+      "required": [
+        "angles_rad",
+        "speeds_rad_s",
+        "torques_nm"
+      ],
+      "properties": {
+        "angles_rad": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "speeds_rad_s": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "torques_nm": {
+          "type": "array",
+          "description": "驱动器给关节的力矩",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "ImuReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceleration",
+        "angular_velocity"
+      ],
+      "properties": {
+        "acceleration": {
+          "$ref": "#/$defs/Vector"
+        },
+        "angular_velocity": {
+          "$ref": "#/$defs/Vector"
+        }
+      },
+      "description": "acceleration：m/s²。站着不动时是朝上的 9.81；angular_velocity：rad/s"
+    },
+    "ForceReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "force",
+        "moment"
+      ],
+      "properties": {
+        "force": {
+          "$ref": "#/$defs/Vector"
+        },
+        "moment": {
+          "$ref": "#/$defs/Vector"
+        }
+      },
+      "description": "force：牛顿，传感器自己的坐标；moment：牛·米"
+    },
+    "FootSupport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "support_n",
+        "pressure_center"
+      ],
+      "properties": {
+        "support_n": {
+          "type": "number",
+          "minimum": 0
+        },
+        "pressure_center": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Vector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "这只脚没有踩在地上时是 null"
+        }
+      }
+    },
+    "Push": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "force_n",
+        "remaining_s"
+      ],
+      "properties": {
+        "force_n": {
+          "$ref": "#/$defs/Vector"
+        },
+        "remaining_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "还要推多久"
+        }
+      }
+    },
+    "Ack": {
+      "type": "object",
+      "description": "对一条命令的答复。先做完命令再答复，所以答复以后的状态已经是做完以后的",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "ok",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "const": "ack"
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "命令的编号。命令坏到读不出编号时是 null"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "description": "没有照做的时候说为什么；照做了是空的"
+        }
+      }
+    }
+  }
+}

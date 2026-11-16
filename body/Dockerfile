@@ -11,5 +11,7 @@ COPY body/requirements.txt body/requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 
 COPY body /app
+# 消息的规约。开发时会被挂上来的目录盖住；这里放一份，镜像自己也是完整的。
+COPY contracts /contracts
 
 CMD ["python", "-m", "nova_body.mass_report"]

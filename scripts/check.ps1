@@ -1,13 +1,15 @@
 ﻿<#
 .SYNOPSIS
-    提交前的本地检查：外面来的文件（基线的模型）齐不齐，身体（在容器里）的格式、代码规则、测试，
-    以及报告和代码是不是对得上。
+    提交前的本地检查：外面来的文件（基线的模型）齐不齐，身体和仿真（在容器里）的格式、代码规则、测试，
+    报告和代码是不是对得上，网页的代码规则、类型、测试、打包。
 .EXAMPLE
     .\scripts\check.ps1
 #>
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Results = New-Object System.Collections.Generic.List[object]
+
+$View = Join-Path $Root 'view'
 
 function Invoke-Step([string]$Name, [scriptblock]$Command) {
     Write-Host ''
@@ -34,7 +36,7 @@ function Invoke-Step([string]$Name, [scriptblock]$Command) {
 Invoke-Step '外面来的文件：基线的模型和清单一样（没有就下载）' {
     docker compose run --rm --build body python -m nova_body.third_party
 }
-Invoke-Step '身体：格式、代码规则、测试（容器）' {
+Invoke-Step '身体和仿真：格式、代码规则、测试（容器）' {
     docker compose run --rm body sh -c 'ruff format --check . && ruff check . && pytest -q'
 }
 # 报告是程序生成的。改了假设或代码却忘了重新生成，这一步就会不通过。
@@ -47,6 +49,18 @@ Invoke-Step '身体：身体模型的报告、图和代码对得上' {
 Invoke-Step '身体：基线的报告、图和代码对得上' {
     docker compose run --rm body sh -c 'python -m nova_body.baseline_report --output /tmp/baseline.md > /dev/null && cmp /tmp/baseline.md /docs/报告/基线身体.md && cmp /tmp/baseline.svg /docs/报告/基线身体.svg'
 }
+# 网页在这台电脑上直接跑（不在容器里）。依赖已经装好的话，这一步很快。
+Invoke-Step '网页：依赖装好了' {
+    npm --prefix $View install --prefer-offline --no-audit --no-fund
+}
+# 类型是照规约生成的。改了规约却忘了重新生成，这一步就会不通过。
+Invoke-Step '网页：照规约生成的类型是最新的' {
+    npm --prefix $View run contracts
+    if ($LASTEXITCODE -eq 0) { git diff --exit-code -- view/src/generated }
+}
+Invoke-Step '网页：代码规则（ESLint）' { npm --prefix $View run lint }
+Invoke-Step '网页：类型检查、打包' { npm --prefix $View run build }
+Invoke-Step '网页：测试（Vitest）' { npm --prefix $View run test }
 
 Write-Host ''
 $Results | Format-Table -AutoSize | Out-String | Write-Host

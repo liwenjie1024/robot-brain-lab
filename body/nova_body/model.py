@@ -32,7 +32,20 @@ from nova_body.bench import (
     store_stand_pose,
     use_bench_settings,
 )
-from nova_body.body import SIDE_NAMES, Anatomy, Body, DrivenJoint, Imu, Leg, Side, StandPose
+from nova_body.body import (
+    SIDE_NAMES,
+    Anatomy,
+    Body,
+    CameraView,
+    DrivenJoint,
+    ForceSensor,
+    Imu,
+    Leg,
+    Region,
+    Side,
+    StandPose,
+    TouchSensor,
+)
 from nova_body.design import CORE_BODY
 from nova_body.hand import (
     DIGITS,
@@ -74,6 +87,17 @@ HIP_PITCH, KNEE, ANKLE_PITCH = "hip_pitch", "knee", "ankle_pitch"
 PELVIS_IMU = "pelvis_imu"
 HEAD_IMU = "head_imu"
 CHEST_DEPTH_CAMERA = "chest_depth_camera"
+# 骨架上的关节在身体的哪一部分。腕的两个关节算手臂；手指的关节另外算"手"。
+SEGMENT_REGIONS: dict[Segment, Region] = {
+    Segment.CHEST: Region.WAIST,
+    Segment.HEAD: Region.NECK,
+    Segment.UPPER_ARM: Region.ARM,
+    Segment.FOREARM: Region.ARM,
+    Segment.HAND: Region.ARM,
+    Segment.THIGH: Region.LEG,
+    Segment.SHANK: Region.LEG,
+    Segment.FOOT: Region.LEG,
+}
 # IMU 装在哪：模型里那个点的名字，和它在身体的哪里。
 IMU_SITES: dict[str, str] = {PELVIS_IMU: "骨盆", HEAD_IMU: "头"}
 
@@ -206,6 +230,7 @@ class ModelJoint:
     label: str
     key: str
     side: Side | None
+    region: Region
     lower_rad: float
     upper_rad: float
     positive: str
@@ -261,6 +286,16 @@ def part_legend() -> tuple[tuple[str, tuple[float, float, float, float]], ...]:
     return tuple((style.name, style.rgba) for style in PART_STYLES.values())
 
 
+def eye_camera(side: Side) -> str:
+    """眼的相机。"""
+    return f"{side.value}_eye"
+
+
+def palm_camera(side: Side) -> str:
+    """手掌的相机。"""
+    return f"{side.value}_palm_camera"
+
+
 def ankle_ft_site(side: Side) -> str:
     """踝部六轴力传感器的位置。"""
     return f"{side.value}_ankle_ft"
@@ -301,7 +336,14 @@ def build_from_budget(budget: MassBudget, assumptions: Assumptions) -> NovaModel
         model=builder.compile(stand),
         anatomy=anatomy,
         joints=tuple(
-            DrivenJoint(joint.name, joint.label, joint.lower_rad, joint.upper_rad, joint.peak_torque_nm)
+            DrivenJoint(
+                name=joint.name,
+                label=joint.label,
+                region=joint.region,
+                lower_rad=joint.lower_rad,
+                upper_rad=joint.upper_rad,
+                peak_torque_nm=joint.peak_torque_nm,
+            )
             for joint in builder.joints
             if joint.peak_torque_nm is not None
         ),
@@ -309,7 +351,11 @@ def build_from_budget(budget: MassBudget, assumptions: Assumptions) -> NovaModel
         stand=stand,
         height_m=builder.dims.height,
         foot_length_m=builder.dims.foot_length,
+        foot_width_m=builder.dims.foot_width,
         drawn_groups=(SHELL_GROUP, PART_GROUP),
+        force_sensors=_force_sensors(),
+        touch_sensors=_touch_sensors(),
+        cameras=_cameras(),
     )
     return NovaModel(
         spec=builder.spec,
@@ -320,6 +366,41 @@ def build_from_budget(budget: MassBudget, assumptions: Assumptions) -> NovaModel
         joints=tuple(builder.joints),
         part_kinds=builder.kinds,
     )
+
+
+def _force_sensors() -> tuple[ForceSensor, ...]:
+    """踝和腕的六轴力传感器。"""
+    places = (("踝", ankle_ft_site), ("腕", wrist_ft_site))
+    return tuple(
+        ForceSensor(SIDE_NAMES[side] + place, site(side) + FORCE_SUFFIX, site(side) + MOMENT_SUFFIX)
+        for place, site in places
+        for side in Side
+    )
+
+
+def _touch_sensors() -> tuple[TouchSensor, ...]:
+    """接触力：先是身体的每一段（手算一整段），再是每个指尖。"""
+    segments = [
+        TouchSensor(
+            part.name if side is None else f"{SIDE_NAMES[side]} {part.name}",
+            side_prefix(side) + part.key + CONTACT_SUFFIX,
+        )
+        for part in LINKS
+        for side in sides_of(part)
+    ]
+    fingertips = [
+        TouchSensor(f"{SIDE_NAMES[side]} {digit.name}指尖", tip_force_sensor(side, digit.key))
+        for side in Side
+        for digit in DIGITS
+    ]
+    return (*segments, *fingertips)
+
+
+def _cameras() -> tuple[CameraView, ...]:
+    """相机：两只眼、胸前看脚下的那台、两个手掌。"""
+    eyes = [CameraView(f"{SIDE_NAMES[side]}眼", eye_camera(side)) for side in Side]
+    palms = [CameraView(f"{SIDE_NAMES[side]}手掌", palm_camera(side)) for side in Side]
+    return (*eyes, CameraView("胸前（朝下）", CHEST_DEPTH_CAMERA), *palms)
 
 
 def _anatomy() -> Anatomy:
@@ -455,7 +536,7 @@ class _Builder:
         """加一段身体：它的关节，和它里面的驱动器、别的东西。外壳另外加。"""
         body = parent.add_body(name=side_prefix(side) + part.key, pos=list(mirror_point(position, side)))
         for joint in part.joints:
-            self._add_skeleton_joint(body, joint, side)
+            self._add_skeleton_joint(body, joint, side, SEGMENT_REGIONS[part.segment])
         self._add_parts(body, part.segment, side)
         return body
 
@@ -523,7 +604,7 @@ class _Builder:
         eye_forward = center[0] + EYE_FORWARD_FRACTION * d.head_half_length
         for side in Side:
             eye = mirror_point((eye_forward, EYE_SPACING_M / 2, d.eye_above_neck_joint), side)
-            self._add_camera(head, f"{side.value}_eye", eye, look=FORWARD, up=UP, fovy_deg=EYE_FOVY_DEG)
+            self._add_camera(head, eye_camera(side), eye, look=FORWARD, up=UP, fovy_deg=EYE_FOVY_DEG)
 
     def _add_arm(self, chest, side: Side) -> None:
         d = self.dims
@@ -597,7 +678,7 @@ class _Builder:
         palm.add_site(name=wrist_ft_site(side), pos=[0.0, 0.0, 0.0])
         self._add_camera(
             palm,
-            f"{side.value}_palm_camera",
+            palm_camera(side),
             tuple(self._hand_point(PALM_CAMERA_POSITION, side)),
             look=from_hand((0.0, 0.0, 1.0), side),
             up=UP,
@@ -648,13 +729,14 @@ class _Builder:
 
     # 关节 -------------------------------------------------------------------------------------------
 
-    def _add_skeleton_joint(self, body, joint: Joint, side: Side | None) -> None:
+    def _add_skeleton_joint(self, body, joint: Joint, side: Side | None, region: Region) -> None:
         torque = self._torques[joint.group][joint.index]
         model_joint = ModelJoint(
             name=side_prefix(side) + joint.key,
             label=joint.name if side is None else f"{SIDE_NAMES[side]} {joint.name}",
             key=joint.key,
             side=side,
+            region=region,
             lower_rad=math.radians(joint.lower_deg),
             upper_rad=math.radians(joint.upper_deg),
             positive=joint.positive,
@@ -670,6 +752,7 @@ class _Builder:
             label=f"{SIDE_NAMES[side]} {joint.name}",
             key=joint.key,
             side=side,
+            region=Region.HAND,
             lower_rad=math.radians(joint.lower_deg),
             upper_rad=math.radians(joint.upper_deg),
             positive=joint.positive,

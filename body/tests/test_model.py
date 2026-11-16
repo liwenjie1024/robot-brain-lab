@@ -433,3 +433,44 @@ def test_rejects_an_odd_count_on_a_paired_segment():
     items = tuple(replace(item, count=3) if item.key == "knee_brake" else item for item in budget.items)
     with pytest.raises(ModelError, match="膝的制动器：3 个分不到左右两侧"):
         build_from_budget(replace(budget, items=items), Assumptions())
+
+
+# 交给测试台和网页的清单 ------------------------------------------------------------------------------
+
+
+def test_joints_are_grouped_by_body_region(nova):
+    """每个有驱动器的关节都写着在身体的哪一部分：腿 12、腰 3、颈 2、手臂 14（含腕）、手 36。"""
+    counts: dict[str, int] = {}
+    for joint in nova.body.joints:
+        counts[joint.region.value] = counts.get(joint.region.value, 0) + 1
+    assert counts == {"腿": 12, "腰": 3, "颈": 2, "手臂": 14, "手": 36}
+    region_of = {joint.name: joint.region.value for joint in nova.body.joints}
+    assert region_of["left_wrist_flex"] == "手臂"
+    assert region_of["left_index_pip"] == "手"
+    assert region_of["lumbar_yaw"] == "腰"
+    assert region_of["right_ankle_roll"] == "腿"
+
+
+def test_catalogue_of_senses_names_real_sensors(nova):
+    """清单里的每种感觉在模型里都有：4 个六轴力、25 处接触（15 段身体 + 10 个指尖）、5 台相机、2 个 IMU。"""
+    model, body = nova.model, nova.body
+    assert [sensor.label for sensor in body.force_sensors] == ["左踝", "右踝", "左腕", "右腕"]
+    for sensor in body.force_sensors:
+        assert model.sensor(sensor.force).type[0] == mujoco.mjtSensor.mjSENS_FORCE
+        assert model.sensor(sensor.moment).type[0] == mujoco.mjtSensor.mjSENS_TORQUE
+    labels = [sensor.label for sensor in body.touch_sensors]
+    assert len(labels) == len(set(labels)) == 25
+    assert labels[:3] == ["骨盆", "胸和腹", "头"]
+    assert {"左 脚", "右 脚", "左 手", "左 拇指指尖", "右 小指指尖"} <= set(labels)
+    for sensor in body.touch_sensors:
+        assert model.sensor(sensor.sensor).type[0] == mujoco.mjtSensor.mjSENS_CONTACT
+        assert model.sensor(sensor.sensor).dim[0] == 3
+    assert [view.label for view in body.cameras] == ["左眼", "右眼", "胸前（朝下）", "左手掌", "右手掌"]
+    assert sorted(model.camera(view.camera).id for view in body.cameras) == list(range(model.ncam))
+    assert [imu.label for imu in body.imus] == ["骨盆", "头"]
+
+
+def test_foot_patch_is_the_sole(nova):
+    """脚底着地的那一块就是脚底的盒子：长是脚长，宽是脚宽。"""
+    assert nova.body.foot_length_m == nova.dimensions.foot_length
+    assert nova.body.foot_width_m == nova.dimensions.foot_width

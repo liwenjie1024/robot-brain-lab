@@ -21,6 +21,16 @@ class Side(StrEnum):
 SIDE_NAMES: dict[Side, str] = {Side.LEFT: "左", Side.RIGHT: "右"}
 
 
+class Region(StrEnum):
+    """关节在身体的哪一部分。给人看的时候按这个分组。"""
+
+    LEG = "腿"
+    WAIST = "腰"
+    NECK = "颈"
+    ARM = "手臂"
+    HAND = "手"
+
+
 @dataclass(frozen=True)
 class Leg:
     """一条腿上测试台要认得的东西，都是模型里的名字。
@@ -45,6 +55,31 @@ class Imu:
 
 
 @dataclass(frozen=True)
+class ForceSensor:
+    """一个六轴力传感器：装在哪，量力和量力矩的两个传感器在模型里叫什么。"""
+
+    label: str
+    force: str
+    moment: str
+
+
+@dataclass(frozen=True)
+class TouchSensor:
+    """一处受到的接触力（三个方向的合力，世界坐标）：在哪，传感器在模型里叫什么。"""
+
+    label: str
+    sensor: str
+
+
+@dataclass(frozen=True)
+class CameraView:
+    """一台相机：装在哪，在模型里叫什么。"""
+
+    label: str
+    camera: str
+
+
+@dataclass(frozen=True)
 class Anatomy:
     """身体上测试台要认得的地方。
 
@@ -60,10 +95,11 @@ class Anatomy:
 
 @dataclass(frozen=True)
 class DrivenJoint:
-    """一个有驱动器的关节。"""
+    """一个有驱动器的关节。region 是它在身体的哪一部分。"""
 
     name: str
     label: str
+    region: Region
     lower_rad: float
     upper_rad: float
     peak_torque_nm: float
@@ -93,8 +129,9 @@ class Body:
     """放上测试台的一个身体。
 
     joints 的顺序和模型里的驱动器一样。height_m 是站直时的身高。
-    foot_length_m 是脚底着地的那一段有多长（压力中心只能在这一段里）。
+    foot_length_m、foot_width_m 是脚底着地的那一块有多长、多宽（压力中心只能在这一块里）。
     drawn_groups 是画图时画哪几组形状。
+    后面三样是这个身体自己带的别的感觉，没有就是空的：六轴力、接触力、相机。
     """
 
     name: str
@@ -105,7 +142,11 @@ class Body:
     stand: StandPose
     height_m: float
     foot_length_m: float
+    foot_width_m: float
     drawn_groups: tuple[int, ...]
+    force_sensors: tuple[ForceSensor, ...] = ()
+    touch_sensors: tuple[TouchSensor, ...] = ()
+    cameras: tuple[CameraView, ...] = ()
 
     @property
     def mass_kg(self) -> float:

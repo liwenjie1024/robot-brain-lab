@@ -119,7 +119,7 @@ def simulate_standing(
         pushing = push is not None and push.is_active(data.time)
         data.xfrc_applied[pushed, :3] = push.force_n if pushing else 0.0
         mujoco.mj_step(model, data)
-        max_tilt_deg = max(max_tilt_deg, _tilt_deg(data, root))
+        max_tilt_deg = max(max_tilt_deg, tilt_deg(data, root))
         lowest = min(lowest, float(data.xpos[root][UPRIGHT_AXIS]))
         if lowest < FALLEN_HEIGHT_FRACTION * start_height or max_tilt_deg > FALLEN_TILT_DEG:
             fell = True
@@ -150,8 +150,11 @@ def standing_data(model: mujoco.MjModel) -> mujoco.MjData:
     return data
 
 
-def floor_support(model: mujoco.MjModel, data: mujoco.MjData) -> tuple[float, np.ndarray]:
-    """地面托着身体的力（各个接触点法向力的和），和压力中心的位置。没有接触时位置是 nan。"""
+def floor_support(model: mujoco.MjModel, data: mujoco.MjData, part: int | None = None) -> tuple[float, np.ndarray]:
+    """地面托着身体的力（各个接触点法向力的和），和压力中心的位置。没有接触时位置是 nan。
+
+    给了 part（模型里一段身体的编号，比如一只脚），就只算地面托着这一段的。
+    """
     floor = model.geom(FLOOR).id
     total = 0.0
     weighted = np.zeros(3)
@@ -159,6 +162,9 @@ def floor_support(model: mujoco.MjModel, data: mujoco.MjData) -> tuple[float, np
     for index in range(data.ncon):
         contact = data.contact[index]
         if floor not in contact.geom:
+            continue
+        touching = contact.geom[1] if contact.geom[0] == floor else contact.geom[0]
+        if part is not None and model.geom_bodyid[touching] != part:
             continue
         mujoco.mj_contactForce(model, data, index, force)
         total += force[0]
@@ -205,7 +211,7 @@ def _without_actuation(model: mujoco.MjModel) -> mujoco.MjModel:
     return limp
 
 
-def _tilt_deg(data: mujoco.MjData, body: int) -> float:
+def tilt_deg(data: mujoco.MjData, body: int) -> float:
     """这个身体的"上"和世界的"上"之间的夹角。"""
     upright = data.xmat[body].reshape(3, 3)[UPRIGHT_AXIS, UPRIGHT_AXIS]
     return math.degrees(math.acos(max(-1.0, min(1.0, float(upright)))))

@@ -2,16 +2,36 @@
 # 这台电脑的 Windows（智能应用控制）会拦没有签名的 mujoco.dll。
 #   docker compose run --rm body pytest                         测试
 #   docker compose run --rm body python -m nova_body.mass_report  算一次质量闭环，报告写进 docs/报告
+#   docker compose up -d sim                                    实时的仿真，给网页看（改了代码要 docker compose restart sim）
 name: nova
 
+# 两个服务用同一个镜像，都挂着源码：改了代码不用重新做镜像。
+x-python: &python
+  image: nova-body
+  build:
+    context: .
+    dockerfile: body/Dockerfile
+
 services:
+  # 测试、算报告：用完就退出。
   body:
-    build:
-      context: .
-      dockerfile: body/Dockerfile
-    # 挂上源码：改了代码不用重新做镜像。挂上 docs：报告直接写进仓库。
-    # 挂上 third_party：外面来的东西（基线的模型）下载到这里，不做进镜像。
+    <<: *python
+    # 挂上 docs：报告直接写进仓库。挂上 third_party：外面来的东西（基线的模型）下载到这里，不做进镜像。
+    # 挂上 contracts：消息的规约。
     volumes:
       - ./body:/app
       - ./docs:/docs
       - ./third_party:/third_party
+      - ./contracts:/contracts
+
+  # 实时的仿真和给网页的服务：一直开着。网页（view）经它自己的开发服务器连过来。
+  # 只在这台电脑自己（127.0.0.1）上开端口，别的电脑连不进来。这里用到的东西都只读。
+  sim:
+    <<: *python
+    command: python -m nova_sim
+    ports:
+      - "127.0.0.1:8870:8870"
+    volumes:
+      - ./body:/app:ro
+      - ./third_party:/third_party:ro
+      - ./contracts:/contracts:ro

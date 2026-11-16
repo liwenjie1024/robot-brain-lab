@@ -189,11 +189,11 @@ def _project(body: Body, data: mujoco.MjData, view: View) -> list[_Shape]:
             continue
         outline = _geom_outline(model, data, geom, axes)
         nearness = float(np.dot(view.toward_viewer, data.geom_xpos[geom]))
-        shapes.append(_Shape(outline, _color(model, geom), int(model.geom_group[geom]), nearness))
+        shapes.append(_Shape(outline, shape_color(model, geom), int(model.geom_group[geom]), nearness))
     return sorted(shapes, key=lambda shape: (shape.layer, shape.nearness))
 
 
-def _color(model: mujoco.MjModel, geom: int) -> Rgba:
+def shape_color(model: mujoco.MjModel, geom: int) -> Rgba:
     """这个形状的颜色：有材质用材质的，没有用它自己的。"""
     material = model.geom_matid[geom]
     rgba = model.geom_rgba[geom] if material < 0 else model.mat_rgba[material]

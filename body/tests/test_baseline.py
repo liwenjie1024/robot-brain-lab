@@ -28,6 +28,7 @@ from nova_body.baseline import (
     g1_manifest,
     joint_label,
     joint_name,
+    joint_region,
     load_g1,
     load_published_g1,
     put_on_bench,
@@ -398,3 +399,34 @@ def test_needs_the_manifest(tmp_path):
     """连清单都没有：报错。"""
     with pytest.raises(ManifestError, match="读不出来"):
         load_g1(tmp_path)
+
+
+# 交给测试台和网页的清单 ------------------------------------------------------------------------------
+
+
+def test_g1_joints_are_grouped_by_body_region(g1):
+    """基线的每个关节也写着在身体的哪一部分：腿 12、腰 3、手臂 14（含腕）。它没有颈和手指的关节。"""
+    counts: dict[str, int] = {}
+    for joint in g1.joints:
+        counts[joint.region.value] = counts.get(joint.region.value, 0) + 1
+    assert counts == {"腿": 12, "腰": 3, "手臂": 14}
+    assert joint_region("left_wrist_yaw_joint").value == "手臂"
+    assert joint_region("waist_roll_joint").value == "腰"
+    assert joint_region("right_knee_joint").value == "腿"
+
+
+def test_unknown_joint_has_no_region():
+    """不认识的关节：不瞎猜它在身体的哪一部分。"""
+    with pytest.raises(BaselineError, match="不认识的关节：left_thumb_0_joint"):
+        joint_region("left_thumb_0_joint")
+
+
+def test_g1_has_no_force_touch_or_camera_catalogue(g1):
+    """基线的模型里没有六轴力、量接触的传感器和相机，清单是空的。"""
+    assert (g1.force_sensors, g1.touch_sensors, g1.cameras) == ((), (), ())
+    assert g1.model.ncam == 0
+
+
+def test_g1_foot_patch_is_the_box_around_the_balls(g1):
+    """脚底着地的那一块：四个小球围出来的，长 18 cm、宽 7 cm。"""
+    assert (g1.foot_length_m, g1.foot_width_m) == pytest.approx((0.18, 0.07))
