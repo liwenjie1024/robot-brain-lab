@@ -176,12 +176,20 @@ def test_stand_pose_is_stored_in_the_model(body):
 
 
 def test_nova_ankles_hold_the_body_over_the_middle_of_the_feet(nova):
-    """重心在脚的正中间上面，比踝靠前，所以两个踝各出"一半体重 x 这段距离"的力矩，往脚尖向下的方向。"""
+    """重心在脚的正中间上面，比踝靠前：地面在脚的正中间托着一半体重，脚自己的重量托在它的重心上，
+    两个踝各出这两个力绕踝的力矩之差，往脚尖向下的方向。"""
     d = nova.dimensions
     names = [joint.name for joint in nova.actuated_joints]
     lever = d.foot_length / 2 - d.heel_behind_ankle
-    foot_kg = float(nova.model.body_subtreemass[nova.model.body("left_foot").id])
-    expected = -(nova.budget.total_kg / 2 - foot_kg) * 9.81 * lever
+    model = nova.model
+    data = mujoco.MjData(model)
+    data.qpos[:] = nova.stand.qpos
+    mujoco.mj_kinematics(model, data)
+    mujoco.mj_comPos(model, data)
+    foot = model.body("left_foot").id
+    foot_kg = float(model.body_subtreemass[foot])
+    foot_lever = float(data.subtree_com[foot][0] - data.xanchor[model.joint("left_ankle_pitch").id][0])
+    expected = -(nova.budget.total_kg / 2 * lever - foot_kg * foot_lever) * 9.81
     for side in Side:
         torque = nova.stand.holding_torque_nm[names.index(f"{side.value}_ankle_pitch")]
         assert torque == pytest.approx(expected, rel=0.01)
@@ -224,9 +232,9 @@ def test_nova_relaxed_angles_name_real_joints(nova):
             assert angle_of(nova.body, f"{side.value}_{key}") == pytest.approx(math.radians(degrees))
 
 
-@pytest.mark.parametrize("knee_deg", [60.0, 120.0], ids=["半蹲", "深蹲"])
+@pytest.mark.parametrize("knee_deg", [100.0, 120.0], ids=["膝弯 100°", "深蹲"])
 def test_nova_deep_squat_with_upright_trunk_is_rejected(nova, knee_deg):
-    """躯干竖直时蹲不深：踝最多转 20°，重心到不了脚的中间。报错，不给一个站不住的姿势。"""
+    """躯干竖直时蹲不到底：踝最多转 45°，膝弯过 86° 以后重心到不了脚的中间。报错，不给一个站不住的姿势。"""
     with pytest.raises(PostureError, match="找不到让重心落在脚中间的站姿"):
         solve_stand_pose(nova.model, nova.body.anatomy, knee_deg)
 
@@ -469,10 +477,10 @@ def test_deepest_knee_bend_is_the_last_one_that_still_stands(body):
 
 
 def test_ankle_range_decides_how_deep_each_body_can_squat(nova, g1):
-    """Nova 的踝只能让脚尖向上 20°，膝最多弯到 32°；G1 的踝能到 50°，膝能弯到 97°。"""
-    assert toe_up_limit_deg(nova.model, nova.body.anatomy) == pytest.approx(20.0)
+    """Nova 的踝让脚尖向上 45°，膝最多弯到 86°；G1 的踝能到 50°，膝能弯到 97°。"""
+    assert toe_up_limit_deg(nova.model, nova.body.anatomy) == pytest.approx(45.0)
     assert toe_up_limit_deg(g1.model, g1.anatomy) == pytest.approx(50.0, abs=0.01)
-    assert deepest_knee_bend_deg(nova.body) == 32.0
+    assert deepest_knee_bend_deg(nova.body) == 86.0
     assert deepest_knee_bend_deg(g1) == 97.0
 
 
@@ -486,7 +494,7 @@ def test_toe_up_limit_does_not_depend_on_which_way_the_ankle_counts_positive():
 
 def test_coarser_steps_find_a_shallower_or_equal_bend(nova):
     """一格 5° 地试，找到的是不超过最深那个角度的 5 的倍数。"""
-    assert deepest_knee_bend_deg(nova.body, step_deg=5.0) == 30.0
+    assert deepest_knee_bend_deg(nova.body, step_deg=5.0) == 85.0
 
 
 @pytest.mark.parametrize("step_deg", [0.0, -1.0], ids=["0 度", "负的"])

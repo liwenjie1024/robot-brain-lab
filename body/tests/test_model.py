@@ -11,7 +11,7 @@ from nova_body.actuator_mass import best_today_model, conservative_model
 from nova_body.anthropometry import Segment, segment_count
 from nova_body.bench import FLOOR, POSITION_SUFFIX, STAND_KEY, TIMESTEP_S
 from nova_body.body import Side
-from nova_body.design import CORE_BODY
+from nova_body.design import CORE_BODY, JOINT_GROUPS
 from nova_body.hand import DIGITS, hand_joints
 from nova_body.mass_closure import Assumptions, FixedItem, close_mass
 from nova_body.model import (
@@ -179,12 +179,15 @@ def test_joint_ranges_are_in_the_model(nova):
 
 
 def test_motor_limits_follow_the_mass_closure(nova):
-    """驱动器最多出的力矩是质量闭环给的峰值力矩：膝按体重放大，颈不变，手是估的值。"""
+    """驱动器最多出的力矩是质量闭环给的峰值力矩：膝、踝按体重放大，颈不变，手是估的值。"""
     model = nova.model
     scale = nova.budget.total_kg / 70.0
-    assert model.actuator("left_knee").forcerange == pytest.approx([-300 * scale, 300 * scale])
-    assert model.actuator("right_ankle_pitch").forcerange == pytest.approx([-250 * scale, 250 * scale])
-    assert model.actuator("right_ankle_roll").forcerange == pytest.approx([-100 * scale, 100 * scale])
+    groups = {group.key: group for group in JOINT_GROUPS}
+    knee = groups["knee"].daily_torques_nm[0] * scale
+    pitch, roll = (torque * scale for torque in groups["ankle"].daily_torques_nm)
+    assert model.actuator("left_knee").forcerange == pytest.approx([-knee, knee])
+    assert model.actuator("right_ankle_pitch").forcerange == pytest.approx([-pitch, pitch])
+    assert model.actuator("right_ankle_roll").forcerange == pytest.approx([-roll, roll])
     assert model.actuator("neck_yaw").forcerange == pytest.approx([-20, 20])
     assert model.actuator("left_index_mcp_flex").forcerange == pytest.approx([-2.5, 2.5])
 

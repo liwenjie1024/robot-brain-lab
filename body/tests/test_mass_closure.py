@@ -6,10 +6,14 @@ import pytest
 
 from nova_body.actuator_mass import ActuatorMassModel, best_today_model, conservative_model
 from nova_body.anthropometry import Segment, segment_count
-from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON
+from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON, Strength
 from nova_body.mass_closure import Assumptions, MassBudget, MassClosureError, close_mass, joint_peak_torques_nm
 
 BASE = Assumptions()
+
+
+def group_of(key: str):
+    return next(group for group in CORE_BODY.joint_groups() if group.key == key)
 
 
 def close_core(assumptions: Assumptions = BASE) -> MassBudget:
@@ -63,9 +67,17 @@ def test_one_added_kilogram_costs_more_than_one_kilogram():
 
 
 def test_leg_torque_scales_with_body_mass():
-    """腿的力矩按体重等比例放大：70 kg 时膝是 300 N·m。"""
+    """腿的力矩按体重等比例放大：设计里写的是 70 kg 时的（动作算的目标，或者人的峰值 300 N·m）。"""
     budget = close_core()
-    assert line_for(budget, "knee").torque_nm == pytest.approx(300.0 * budget.total_kg / 70.0, rel=1e-6)
+    knee = group_of("knee").daily_torques_nm[0]
+    assert line_for(budget, "knee").torque_nm == pytest.approx(knee * budget.total_kg / 70.0, rel=1e-6)
+    peak = close_core(replace(BASE, strength=Strength.HUMAN_PEAK))
+    assert line_for(peak, "knee").torque_nm == pytest.approx(300.0 * peak.total_kg / 70.0, rel=1e-6)
+
+
+def test_motion_targets_make_a_lighter_body_than_human_peaks():
+    """按动作算的力量（做家务的那一档）比按人的峰值轻。"""
+    assert close_core().total_kg < close_core(replace(BASE, strength=Strength.HUMAN_PEAK)).total_kg
 
 
 def test_half_strength_body_is_lighter():
@@ -93,8 +105,11 @@ def test_all_tendon_hand_is_heavier_than_in_hand_drive():
 
 
 def test_shoulder_uses_spec_torque_for_normal_payload():
-    """端的东西不重时，肩用规格里的力矩。"""
-    assert line_for(close_core(), "shoulder_pitch").torque_nm == pytest.approx(135.0)
+    """端的东西不重时，肩用设计里的力矩（动作算的目标；按人的峰值时是 135 N·m）。"""
+    shoulder = group_of("shoulder_pitch").daily_torques_nm[0]
+    assert line_for(close_core(), "shoulder_pitch").torque_nm == pytest.approx(shoulder)
+    peak = close_core(replace(BASE, strength=Strength.HUMAN_PEAK))
+    assert line_for(peak, "shoulder_pitch").torque_nm == pytest.approx(135.0)
 
 
 def test_heavy_payload_raises_shoulder_and_elbow_torque():
@@ -188,10 +203,12 @@ def test_joint_peak_torques_follow_the_closed_mass():
     budget = close_core()
     scale = budget.total_kg / 70.0
     groups = {group.key: group for group in CORE_BODY.joint_groups()}
-    assert joint_peak_torques_nm(groups["knee"], BASE, budget) == pytest.approx((300.0 * scale,))
-    assert joint_peak_torques_nm(groups["ankle"], BASE, budget) == pytest.approx((250.0 * scale, 100.0 * scale))
+    knee, ankle = groups["knee"].daily_torques_nm, groups["ankle"].daily_torques_nm
+    assert joint_peak_torques_nm(groups["knee"], BASE, budget) == pytest.approx((knee[0] * scale,))
+    assert joint_peak_torques_nm(groups["ankle"], BASE, budget) == pytest.approx((ankle[0] * scale, ankle[1] * scale))
     assert joint_peak_torques_nm(groups["neck_upper"], BASE, budget) == pytest.approx((20.0, 20.0))
-    assert joint_peak_torques_nm(groups["shoulder_pitch"], BASE, budget) == pytest.approx((135.0,))
+    shoulder = groups["shoulder_pitch"].daily_torques_nm
+    assert joint_peak_torques_nm(groups["shoulder_pitch"], BASE, budget) == pytest.approx(shoulder)
 
 
 def test_joint_peak_torques_of_fixed_mass_group_are_empty():

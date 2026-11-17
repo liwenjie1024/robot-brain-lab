@@ -10,7 +10,7 @@ from pathlib import Path
 
 from nova_body.actuator_mass import QDD_SAMPLES, ActuatorMassModel, best_today_model, conservative_model
 from nova_body.anthropometry import SEGMENT_NAMES, Segment, human_segment_mass_kg
-from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON, BodyVariant
+from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON, BodyVariant, Strength
 from nova_body.mass_closure import Assumptions, MassBudget, MassClosureError, close_mass
 
 DEFAULT_OUTPUT = Path("/docs/报告/质量闭环.md")
@@ -95,6 +95,7 @@ def _what_if_section(baseline: MassBudget, base: Assumptions, model: ActuatorMas
             CORE_BODY,
             replace(base, structure_fraction=HEAVY_STRUCTURE_FRACTION),
         ),
+        ("驱动器按人的峰值（初估）定，不按动作算的", CORE_BODY, replace(base, strength=Strength.HUMAN_PEAK)),
         ("力量减半（轻的家用身体）", CORE_BODY, replace(base, strength_factor=LIGHT_HOME_STRENGTH)),
         (f"完整版（{FULL_BODY.total_dof()} 个自由度，全肌腱的手）", FULL_BODY, base),
     )
@@ -163,6 +164,7 @@ def _assumptions_section(base: Assumptions) -> str:
     cooling = f"{base.liquid_cooling_kg:g} kg" if base.liquid_cooling else "不要"
     items = [
         ("身高", f"{base.height_m:g} m"),
+        ("驱动器的力量", f"{base.strength.value}；动作没算出目标的关节（颈、肩转、前臂转、腕）用人的峰值"),
         ("规格里的峰值力矩对应的体重", f"{base.reference_body_mass_kg:g} kg；腿和躯干的力矩按实际体重等比例放大"),
         ("骨架", f"占总重的 {base.structure_fraction:.0%}"),
         ("线", f"占总重的 {base.wiring_fraction:.0%}"),
@@ -171,6 +173,7 @@ def _assumptions_section(base: Assumptions) -> str:
         ("液冷（泵、散热器、冷却液、管）", cooling),
         ("皮肤、软外壳、外衣", f"{base.skin_and_cover_kg:g} kg"),
         ("传感器（相机、麦克风等）", f"{base.sensors_kg:g} kg"),
+        ("脚里的东西（踝的六轴力传感器、脚底的压力皮肤、脚板）", f"每只脚 {base.foot_hardware_kg:g} kg"),
         ("超级电容", f"{base.supercapacitor_kg:g} kg"),
         ("制动器", f"膝和髋共 4 个，每个 {base.brake_kg:g} kg"),
         ("安全控制板", f"{base.safety_board_kg:g} kg"),
@@ -208,7 +211,8 @@ def _limits_section() -> str:
         [
             "## 7. 这个模型还不知道的",
             "",
-            '- **速度**：只按峰值力矩算重量，没算要转多快。要等"从动作反推驱动"做完。',
+            "- **速度**：只按峰值力矩算重量，没算要转多快。每个关节要的转速在[力量的报告](力量.md)里，"
+            "按转速、发热选电机是 1.6 步的事。",
             "- **持续的力**：峰值只能出一小会儿。能一直出多大的力要看散热，这里没算。",
             "- **推杆**：没有核实过的重量数据，先按旋转驱动器算。",
             "- **手**：三种手的重量都是估的。",

@@ -16,6 +16,7 @@
 
 import math
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -147,6 +148,10 @@ CHEST_DEPTH_HEIGHT_FRACTION = 0.8
 UP: Vector = (0.0, 0.0, 1.0)
 FORWARD: Vector = (1.0, 0.0, 0.0)
 PALM_ORIGIN: Vector = (0.0, 0.0, 0.0)
+# 手心正中间（手里的坐标：往指尖、往拇指一侧、往手心，手长的倍数）：拿东西、撑地的地方。
+PALM_CENTER: Vector = (0.24, 0.0, PALM_HALF_THICKNESS_RATIO)
+# 跪地时着地的点在膝关节下面多远（身高的倍数）：胫骨的上端。
+KNEE_FRONT_BELOW_JOINT_RATIO = 0.03
 
 _FINGERS = tuple(digit.key for digit in DIGITS if digit.key != "thumb")
 
@@ -178,6 +183,7 @@ class PartKind(StrEnum):
     COOLING = "cooling"
     FALLBACK = "fallback"
     SENSOR = "sensor"
+    FOOT = "foot"
 
 
 @dataclass(frozen=True)
@@ -202,6 +208,10 @@ PART_STYLES: dict[PartKind, PartStyle] = {
     PartKind.COOLING: PartStyle("液冷", 800.0, (0.25, 0.72, 0.80, 1.0), (0.3, 1.0, 1.0)),
     PartKind.FALLBACK: PartStyle("保底的东西（超级电容、制动器、安全板）", 1500.0, (0.80, 0.27, 0.27, 1.0)),
     PartKind.SENSOR: PartStyle("传感器", 1000.0, (0.58, 0.36, 0.78, 1.0)),
+    # 脚里的东西主要是一块脚板，画成扁的盒子，不会从脚底下面冒出来。
+    PartKind.FOOT: PartStyle(
+        "脚里的东西（力传感器、压力皮肤、脚板）", 2700.0, (0.45, 0.45, 0.50, 1.0), (1.0, 0.45, 0.12)
+    ),
 }
 
 # 不是驱动器的东西各算哪一类。没列在这里的都是关节的驱动器。
@@ -214,6 +224,7 @@ ITEM_KINDS: dict[str, PartKind] = {
     "hip_brake": PartKind.FALLBACK,
     "knee_brake": PartKind.FALLBACK,
     "sensors": PartKind.SENSOR,
+    "foot_hardware": PartKind.FOOT,
 }
 # 手的重量分到手掌和各节手指上，不单独放一块。
 SPREAD_OVER_HAND = "hand"
@@ -296,6 +307,21 @@ def palm_camera(side: Side) -> str:
     return f"{side.value}_palm_camera"
 
 
+def palm_site(side: Side) -> str:
+    """手心正中间的点。"""
+    return f"{side.value}_palm"
+
+
+def knee_front_site(side: Side) -> str:
+    """膝盖前面跪地时着地的点。"""
+    return f"{side.value}_knee_front"
+
+
+def toe_site(side: Side) -> str:
+    """脚尖：脚底最前面那条边的中间。"""
+    return f"{side.value}_toe"
+
+
 def ankle_ft_site(side: Side) -> str:
     """踝部六轴力传感器的位置。"""
     return f"{side.value}_ankle_ft"
@@ -316,21 +342,35 @@ def tip_force_sensor(side: Side, digit_key: str) -> str:
     return tip_site(side, digit_key) + FORCE_SUFFIX
 
 
-def build_nova(assumptions: Assumptions | None = None, actuator_model: ActuatorMassModel | None = None) -> NovaModel:
-    """生成核心版的身体：先算质量闭环，再按算出来的质量生成模型。"""
+def build_nova(
+    assumptions: Assumptions | None = None,
+    actuator_model: ActuatorMassModel | None = None,
+    *,
+    joint_ranges_deg: Mapping[str, tuple[float, float]] | None = None,
+) -> NovaModel:
+    """生成核心版的身体：先算质量闭环，再按算出来的质量生成模型。
+
+    joint_ranges_deg 用来试别的关节范围：按骨架里关节的名字（比如 ankle_pitch）给 (下限, 上限)，两侧一样。
+    """
     assumptions = assumptions or Assumptions()
     budget = close_mass(CORE_BODY, assumptions, actuator_model or best_today_model())
-    return build_from_budget(budget, assumptions)
+    return build_from_budget(budget, assumptions, joint_ranges_deg=joint_ranges_deg)
 
 
-def build_from_budget(budget: MassBudget, assumptions: Assumptions) -> NovaModel:
+def build_from_budget(
+    budget: MassBudget,
+    assumptions: Assumptions,
+    *,
+    joint_ranges_deg: Mapping[str, tuple[float, float]] | None = None,
+) -> NovaModel:
     """按一份算好的质量生成身体。
 
     生成两遍：第一遍的模型用来算站姿（要知道重心在哪），第二遍把站姿存进模型里。
     """
     anatomy = _anatomy()
-    stand = solve_stand_pose(_Builder(budget, assumptions).compile(stand=None), anatomy)
-    builder = _Builder(budget, assumptions)
+    ranges = dict(joint_ranges_deg or {})
+    stand = solve_stand_pose(_Builder(budget, assumptions, ranges).compile(stand=None), anatomy)
+    builder = _Builder(budget, assumptions, ranges)
     body = Body(
         name=BODY_NAME,
         model=builder.compile(stand),
@@ -412,11 +452,14 @@ def _anatomy() -> Anatomy:
             ankle_pitch=f"{side.value}_{ANKLE_PITCH}",
             foot=f"{side.value}_{FOOT_LINK}",
             sole=sole_site(side),
+            knee_front=knee_front_site(side),
+            toe=toe_site(side),
         )
         for side in Side
     }
     relaxed = {f"{side.value}_{key}": math.radians(degrees) for side in Side for key, degrees in RELAXED_DEG.items()}
-    return Anatomy(root=ROOT_LINK, trunk=TRUNK_LINK, legs=legs, relaxed_rad=relaxed)
+    palms = {side: palm_site(side) for side in Side}
+    return Anatomy(root=ROOT_LINK, trunk=TRUNK_LINK, legs=legs, relaxed_rad=relaxed, palms=palms)
 
 
 def _placements(d: Dimensions) -> dict[tuple[Segment, str], tuple[Vector, ...]]:
@@ -472,6 +515,8 @@ def _placements(d: Dimensions) -> dict[tuple[Segment, str], tuple[Vector, ...]]:
             (-0.3 * d.shank_radius, 0.45 * d.shank_radius, -0.25 * d.shank_length),
             (-0.3 * d.shank_radius, -0.45 * d.shank_radius, -0.25 * d.shank_length),
         ),
+        # 脚：力传感器在踝的正下面，脚板和压力皮肤铺满脚底，合起来放在两者中间。
+        (Segment.FOOT, "foot_hardware"): (((d.foot_length / 2 - d.heel_behind_ankle) / 2, 0.0, -0.6 * d.ankle_height),),
     }
 
 
@@ -490,8 +535,11 @@ def _look_quaternion(look: Vector, up: Vector) -> np.ndarray:
 class _Builder:
     """把一个身体一步步加进 MjSpec。"""
 
-    def __init__(self, budget: MassBudget, assumptions: Assumptions) -> None:
+    def __init__(
+        self, budget: MassBudget, assumptions: Assumptions, ranges_deg: dict[str, tuple[float, float]]
+    ) -> None:
         self.budget = budget
+        self._ranges_deg = ranges_deg
         self.dims = Dimensions.for_height(assumptions.height_m)
         self.joints: list[ModelJoint] = []
         self.kinds: dict[str, PartKind] = {}
@@ -623,6 +671,7 @@ class _Builder:
         self._add_limb_shell(
             shank, Segment.SHANK, d.shank_radius, d.shank_length - SHANK_END_GAP_RADII * d.shank_radius
         )
+        shank.add_site(name=knee_front_site(side), pos=[d.shank_radius, 0.0, -KNEE_FRONT_BELOW_JOINT_RATIO * d.height])
         foot = self._add_link(shank, link("foot"), side, (0.0, 0.0, -d.shank_length))
         self._shape_foot(foot, side)
 
@@ -646,6 +695,7 @@ class _Builder:
             size=[ANKLE_BALL_RADII * d.shank_radius, 0.0, 0.0],
         )
         foot.add_site(name=sole_site(side), pos=[center_forward, 0.0, -d.ankle_height])
+        foot.add_site(name=toe_site(side), pos=[d.foot_length - d.heel_behind_ankle, 0.0, -d.ankle_height])
         foot.add_site(name=ankle_ft_site(side), pos=[0.0, 0.0, 0.0])
 
     def _add_limb_shell(self, body, segment: Segment, radius: float, length: float) -> None:
@@ -676,6 +726,7 @@ class _Builder:
             if digit.on_ulnar_palm:
                 self._add_digit(ulnar, PALM_ARCH_PIVOT, digit, side, hand_mass)
         palm.add_site(name=wrist_ft_site(side), pos=[0.0, 0.0, 0.0])
+        palm.add_site(name=palm_site(side), pos=self._hand_point(PALM_CENTER, side))
         self._add_camera(
             palm,
             palm_camera(side),
@@ -731,14 +782,15 @@ class _Builder:
 
     def _add_skeleton_joint(self, body, joint: Joint, side: Side | None, region: Region) -> None:
         torque = self._torques[joint.group][joint.index]
+        lower_deg, upper_deg = self._ranges_deg.get(joint.key, (joint.lower_deg, joint.upper_deg))
         model_joint = ModelJoint(
             name=side_prefix(side) + joint.key,
             label=joint.name if side is None else f"{SIDE_NAMES[side]} {joint.name}",
             key=joint.key,
             side=side,
             region=region,
-            lower_rad=math.radians(joint.lower_deg),
-            upper_rad=math.radians(joint.upper_deg),
+            lower_rad=math.radians(lower_deg),
+            upper_rad=math.radians(upper_deg),
             positive=joint.positive,
             peak_torque_nm=torque,
         )

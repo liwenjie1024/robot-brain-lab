@@ -49,6 +49,10 @@ Invoke-Step '身体：身体模型的报告、图和代码对得上' {
 Invoke-Step '身体：基线的报告、图和代码对得上' {
     docker compose run --rm body sh -c 'python -m nova_body.baseline_report --output /tmp/baseline.md > /dev/null && cmp /tmp/baseline.md /docs/报告/基线身体.md && cmp /tmp/baseline.svg /docs/报告/基线身体.svg'
 }
+# 力量的报告要把全部的动作在两个身体上各做一遍（几个进程一起算），要两三分钟。
+Invoke-Step '身体：力量的报告和代码对得上' {
+    docker compose run --rm body sh -c 'python -m nova_body.strength_report --output /tmp/strength.md > /dev/null && cmp /tmp/strength.md /docs/报告/力量.md'
+}
 # 网页在这台电脑上直接跑（不在容器里）。依赖已经装好的话，这一步很快。
 Invoke-Step '网页：依赖装好了' {
     npm --prefix $View install --prefer-offline --no-audit --no-fund

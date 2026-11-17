@@ -24,8 +24,8 @@ describe('关节费不费力', () => {
     const ankle = rows.find((row) => row.name === 'left_ankle_pitch')!
     expect(ankle.label).toBe('左 踝 前后')
     expect(ankle.region).toBe('腿')
-    expect(ankle.torqueNm).toBeCloseTo(-23.65, 1)
-    expect(ankle.share).toBeCloseTo(0.085, 2)
+    expect(ankle.torqueNm).toBeCloseTo(-22.25, 1)
+    expect(ankle.share).toBeCloseTo(0.091, 2)
     const knee = rows.find((row) => row.name === 'left_knee')!
     expect(knee.angleDeg).toBeCloseTo(15, 1)
   })
@@ -181,7 +181,7 @@ describe('哪里碰到了东西', () => {
   it('站着的时候只有两只脚碰着地面', () => {
     const places = touched(novaScene(), novaState())
     expect(places.map((place) => place.label)).toEqual(['左 脚', '右 脚'])
-    expect(places[0]!.forceN).toBeCloseTo(383.5, 0)
+    expect(places[0]!.forceN).toBeCloseTo(364.1, 0)
   })
 
   it('力不到 0.5 N 的不算碰到；正好 0.5 N 的算', () => {

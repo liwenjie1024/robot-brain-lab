@@ -239,7 +239,7 @@ def test_lineup_shows_every_body_with_its_facts(lineup):
     texts = texts_of(lineup)
     assert "Nova（核心版）" in texts
     assert "Unitree G1" in texts
-    assert "身高 1.70 m · 质量 78.2 kg · 75 个自由度" in texts
+    assert "身高 1.70 m · 质量 74.2 kg · 75 个自由度" in texts
     assert "身高 1.32 m · 质量 33.3 kg · 29 个自由度" in texts
     assert {"1.32 m", "1.70 m", "0.00 m", "1.50 m"} <= set(texts)
     assert texts.count(VIEWS[0].title) == 2

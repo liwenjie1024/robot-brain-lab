@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 
 from nova_body.actuator_mass import ActuatorMassModel
 from nova_body.anthropometry import MASS_FRACTION, Segment, segment_count, segment_length_m
-from nova_body.design import HAND_COUNT, BodyVariant, JointGroup, TorqueRule
+from nova_body.design import HAND_COUNT, BodyVariant, JointGroup, Strength, TorqueRule
 
 GRAVITY_M_S2 = 9.81
 TOLERANCE_KG = 1e-6
@@ -53,14 +53,17 @@ class Assumptions:
     """算质量时用的假设。每个数都会写进报告。
 
     reference_body_mass_kg：机体规格里的峰值力矩是按这个体重定的。
+    strength：驱动器按哪一档力量定（做家务的动作要的，或者人的峰值）。
     strength_factor：力量的倍数。"轻的家用身体"用 0.5。
     structure_fraction、wiring_fraction：骨架、线各占总重的比例。
     fallbacks：要不要算上保底的东西（双绕组多出来的重量、超级电容、制动器、安全板）。
     arm_payload_kg、arm_dynamic_factor：手臂伸直端着这么重的东西，再乘上动起来的倍数。
+    foot_hardware_kg：一只脚里的东西：踝的六轴力传感器约 0.3 kg、脚底的压力皮肤约 0.1 kg、硬的脚板约 0.2 kg。
     """
 
     height_m: float = 1.70
     reference_body_mass_kg: float = 70.0
+    strength: Strength = Strength.DAILY
     strength_factor: float = 1.0
     structure_fraction: float = 0.20
     wiring_fraction: float = 0.04
@@ -71,6 +74,7 @@ class Assumptions:
     liquid_cooling_kg: float = 3.0
     skin_and_cover_kg: float = 3.5
     sensors_kg: float = 1.0
+    foot_hardware_kg: float = 0.6
     fallbacks: bool = True
     supercapacitor_kg: float = 1.0
     brake_kg: float = 0.25
@@ -97,6 +101,7 @@ class Assumptions:
             "液冷的重量": self.liquid_cooling_kg,
             "皮肤和外壳的重量": self.skin_and_cover_kg,
             "传感器的重量": self.sensors_kg,
+            "脚里的东西的重量": self.foot_hardware_kg,
             "超级电容的重量": self.supercapacitor_kg,
             "制动器的重量": self.brake_kg,
             "安全板的重量": self.safety_board_kg,
@@ -181,7 +186,10 @@ def close_mass(variant: BodyVariant, assumptions: Assumptions, model: ActuatorMa
 def joint_peak_torques_nm(group: JointGroup, assumptions: Assumptions, budget: MassBudget) -> tuple[float, ...]:
     """闭合以后，这组关节每个自由度要出的峰值力矩。按固定重量估的组返回空。"""
     guess = _Guess(budget.total_kg, budget.by_segment)
-    return tuple(_required_torque_nm(group.torque_rule, torque, assumptions, guess) for torque in group.peak_torques_nm)
+    return tuple(
+        _required_torque_nm(group.torque_rule, torque, assumptions, guess)
+        for torque in group.spec_torques_nm(assumptions.strength)
+    )
 
 
 @dataclass(frozen=True)
@@ -266,6 +274,14 @@ def _fixed_items(variant: BodyVariant, assumptions: Assumptions, extra_kg: float
         FixedItem("battery", "电池", CATEGORY_BATTERY, Segment.CHEST, 1, battery_kg),
         FixedItem("computer", "电脑", CATEGORY_COMPUTER, Segment.CHEST, 1, assumptions.computer_kg),
         FixedItem("sensors", "传感器", CATEGORY_SENSORS, Segment.HEAD, 1, assumptions.sensors_kg),
+        FixedItem(
+            "foot_hardware",
+            "脚里的力传感器、压力皮肤和脚板",
+            CATEGORY_SENSORS,
+            Segment.FOOT,
+            segment_count(Segment.FOOT),
+            assumptions.foot_hardware_kg,
+        ),
         FixedItem("extra", "额外带的东西", CATEGORY_EXTRA, Segment.CHEST, 1, extra_kg),
     ]
     if assumptions.liquid_cooling:
@@ -311,7 +327,7 @@ def _actuator_lines(
         ]
     overhead = assumptions.dual_winding_overhead if (group.dual_winding and assumptions.fallbacks) else 0.0
     counts: dict[float, int] = {}
-    for spec_torque in group.actuator_torques_nm():
+    for spec_torque in group.actuator_torques_nm(assumptions.strength):
         torque = _required_torque_nm(group.torque_rule, spec_torque, assumptions, guess)
         counts[torque] = counts.get(torque, 0) + group.sides
     return [

@@ -43,7 +43,7 @@ SPEC_RANGES_DEG = {
     "hip_roll": (-30, 60),
     "hip_yaw": (-45, 45),
     "knee": (0, 150),
-    "ankle_pitch": (-50, 20),
+    "ankle_pitch": (-50, 45),
     "ankle_roll": (-20, 35),
 }
 

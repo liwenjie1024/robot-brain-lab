@@ -158,7 +158,7 @@ LINKS: tuple[Link, ...] = (
         "shank",
         True,
         (
-            Joint("ankle_pitch", "踝 前后", "ankle", 0, AXIS_RIGHT, -50.0, 20.0, "脚尖向上"),
+            Joint("ankle_pitch", "踝 前后", "ankle", 0, AXIS_RIGHT, -50.0, 45.0, "脚尖向上"),
             Joint("ankle_roll", "踝 侧", "ankle", 1, AXIS_BACKWARD, -20.0, 35.0, "脚底转向里"),
         ),
     ),

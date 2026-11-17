@@ -5,7 +5,7 @@ Nova（代码生成的）和基线（现成的 Unitree G1）都按这里的样�
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import mujoco
@@ -36,6 +36,7 @@ class Leg:
     """一条腿上测试台要认得的东西，都是模型里的名字。
 
     三个关节都绕左右方向的轴转。sole 是脚底正中间的一个点（site），在贴着地面的那一面上。
+    knee_front 是膝盖前面跪地时着地的点，toe 是脚尖（脚底最前面的那条边的中间）。没有就是 None。
     """
 
     hip_pitch: str
@@ -43,6 +44,8 @@ class Leg:
     ankle_pitch: str
     foot: str
     sole: str
+    knee_front: str | None = None
+    toe: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,12 +88,14 @@ class Anatomy:
 
     root 是骨盆（看它的高度、歪了多少），trunk 是胸（推的地方），都是模型里身体的名字。
     relaxed_rad 是站着时别的关节放在哪（弧度）：腿上的那三个关节由站姿来算，没写的关节是 0。
+    palms 是手心正中间的点（拿东西、撑地的地方）。没有手的身体是空的。
     """
 
     root: str
     trunk: str
     legs: Mapping[Side, Leg]
     relaxed_rad: Mapping[str, float]
+    palms: Mapping[Side, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -35,6 +35,9 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  model（生成 MuJoCo 的模型：形状、东西放哪、驱动器、传感器、相机） model_report（报告）
                  nova_body，每个身体共用的: body（测试台眼里的"一个身体"） bench（测试台：地面、步长、关节控制的软硬）
                  posture（站姿） standing（在仿真里站着、推、量结果） drawing（画成 SVG）
+                 ik（全身的逆运动学） inverse（逆动力学：每个关节要的力矩、撑着的地方受的力）
+                 gait（走路、楼梯的计划：脚步、压力中心、重心的路） motions（第一次考试的动作，一帧一帧）
+                 strength（从动作算力量的目标，几个进程一起算） strength_report（力量的报告）
                  nova_body，基线: third_party（按清单下载、核对外面来的文件） baseline（把 Unitree G1 放上测试台）
                  baseline_report（基线和 Nova 比的报告）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
@@ -57,6 +60,7 @@ docker compose run --rm body python -m nova_body.mass_report   # 算质量闭环
 docker compose run --rm body python -m nova_body.model_report  # 生成身体的模型、站 10 秒，报告和图写进 docs/报告/身体模型.md
 docker compose run --rm body python -m nova_body.third_party   # 下载、核对基线的模型（已经有的只核对，不连网）
 docker compose run --rm body python -m nova_body.baseline_report  # 基线和 Nova 跑同一套测试，报告和图写进 docs/报告/基线身体.md
+docker compose run --rm body python -m nova_body.strength_report  # 两个身体做全部的动作、算力量，报告写进 docs/报告/力量.md（约两分半钟）
 .\scripts\check.ps1                                            # 提交前的检查：外面来的文件、格式、规则、测试、报告和代码对得上、网页
 .\scripts\view.ps1                                             # 打开网页：启动仿真（容器）和网页的服务，再打开浏览器
 docker compose up -d sim                                       # 只启动实时的仿真（http://127.0.0.1:8870）。改了 Python 代码要 docker compose restart sim
@@ -72,6 +76,16 @@ npm --prefix view run test                                     # 网页的测试
 - 规格在 `docs/` 里。改设计就改规格，并在 `docs/决定记录.md` 加一行。`research/` 是历史，内容不再改（只在最上面写"用户定"的结果）。
 - 技术栈看 `docs/技术栈.md`。加库、换库要改它。版本写死；新版本发布超过两周才用。
 - 新的模型、数据、素材先查许可证，登记进 `docs/AI模型.md` 第 10 节（以后要商用）。
+- **力量的目标从动作算**（1.5 步，`strength.py`）：改了动作、身体、质量的假设以后，跑力量的报告；"这一遍算的目标"和
+  `design.DAILY_TARGETS` 差得多（超过几个百分点）就把新的数写进去，再跑一遍（换了目标，体重和身体都变，要算两遍才到头）。
+  报告是确定的（同样的代码算出同样的字），提交前的检查会比对。
+- **逆运动学一帧一帧解，要防它在一帧里跳**（跳一下就算出几倍的假力矩，1.5 步踩过）：关节的边是软的（离边 5° 开始不划算）；
+  每帧拉向上一帧（`Goals.near`）；原地的动作给关键时刻（`key_times`），所有关节一起慢慢变；只用腿的动作里手臂和头不动
+  （`leg_ik`）；逆动力学算加速度以前先低通滤一下（约 6 Hz，和量人的动作一样）。看一个动作可不可信：
+  关节的加速度（几百 rad/s² 以上就可疑）、压力中心离脚底的边、要的摩擦。
+- **压力中心那张换算表跟着骨盆在哪变**，每一帧都要重新算（1.5 步发现一直用着第一帧的，走路的修正越修越偏）。
+- **走路和楼梯的重心高低不直接给**：先不定高低解一遍（姿势尽量像站着），取一条处处不比它高的平滑的线，楼梯再加一条"匀匀地升"的上限。
+  脚跟离地时绕"踩着的那一块的最前面"转（平地是脚尖，下楼是台阶的边），撑着的只有那一条。
 - **计算和仿真只在 Linux 容器里跑。** 这台电脑的 Windows 开着智能应用控制，会拦没有签名的 `mujoco.dll`。
   不要关这个安全设置（关了要重装 Windows 才能再开）。容器挂着源码：改了 Python 代码不用重新做镜像；改了依赖要 `docker compose build body`。
 - **规约只写一处。** 关节表（有哪些关节、力矩、记号）的源头是 `body/nova_body/design.py`；每个关节的转轴和范围在 `skeleton.py`、`hand.py`；

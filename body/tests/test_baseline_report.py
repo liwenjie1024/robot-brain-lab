@@ -72,10 +72,10 @@ def test_strongest_push_survived_is_the_step_before_the_fall(measured):
 
 
 def test_nova_cannot_squat_as_deep_as_the_baseline_with_an_upright_trunk(measured):
-    """躯干竖直时 Nova 蹲不深：它的踝只能让脚尖向上 20°，膝最多弯到 32°；G1 的踝能到 50°，膝能弯到 97°。"""
+    """躯干竖直时 Nova 蹲得没有 G1 深：它的踝让脚尖向上 45°，膝最多弯到 86°；G1 的踝能到 50°，膝能弯到 97°。"""
     nova, g1 = measured
-    assert (nova.toe_up_limit_deg, g1.toe_up_limit_deg) == pytest.approx((20.0, 50.0), abs=0.01)
-    assert (nova.deepest_knee_bend_deg, g1.deepest_knee_bend_deg) == (32.0, 97.0)
+    assert (nova.toe_up_limit_deg, g1.toe_up_limit_deg) == pytest.approx((45.0, 50.0), abs=0.01)
+    assert (nova.deepest_knee_bend_deg, g1.deepest_knee_bend_deg) == (86.0, 97.0)
 
 
 # 报告 ------------------------------------------------------------------------------------------------
@@ -104,14 +104,14 @@ def test_summary_puts_the_two_bodies_side_by_side(report):
     assert "**同一套测试，两个身体都过了。**" in summary
     assert "| 项目 | Nova（核心版） | Unitree G1 |" in summary
     assert "| 身高 | 1.70 m | 1.32 m |" in summary
-    assert "| 质量 | 78.18 kg | 33.34 kg |" in summary
+    assert "| 质量 | 74.23 kg | 33.34 kg |" in summary
     assert "| 自由度 | 75 | 29 |" in summary
     assert "| 驱动器 | 67 | 29 |" in summary
     assert summary.count("站住了：最多歪 0.0") == 2
     assert "没有站好" not in summary
-    assert "| 往前推，最多扛得住 | 体重的 8%（61 N） | 体重的 6%（20 N） |" in summary
-    assert "| 往侧面推，最多扛得住 | 体重的 10%（77 N） | 体重的 14%（46 N） |" in summary
-    assert "| 躯干竖直时，膝最多能弯到 | 32° | 97° |" in summary
+    assert "| 往前推，最多扛得住 | 体重的 8%（58 N） | 体重的 6%（20 N） |" in summary
+    assert "| 往侧面推，最多扛得住 | 体重的 8%（58 N） | 体重的 14%（46 N） |" in summary
+    assert "| 躯干竖直时，膝最多能弯到 | 86° | 97° |" in summary
 
 
 def test_source_section_says_where_the_baseline_comes_from(report):
@@ -133,11 +133,11 @@ def test_pose_section_compares_the_stand_poses(report):
     """站姿那一节：同样弯 15° 的膝；各自的踝和髋；重心的高度；每个身体最费力的关节都是踝。"""
     pose = section(report, 3)
     assert "| 膝 | 弯 15.0° | 弯 15.0° |" in pose
-    assert "| 踝 | 脚尖向上 11.8° | 脚尖向上 10.6° |" in pose
-    assert "| 重心的高度 | 0.952 m（身高的 0.56） | 0.689 m（身高的 0.52） |" in pose
+    assert "| 踝 | 脚尖向上 11.7° | 脚尖向上 10.6° |" in pose
+    assert "| 重心的高度 | 0.944 m（身高的 0.56） | 0.689 m（身高的 0.52） |" in pose
     assert "| 脚底着地的那一段 | 长 25.8 cm | 长 18.0 cm |" in pose
-    assert "| 踝最多能让脚尖向上 | 20° | 50° |" in pose
-    assert "| 踝 前后 | 23.7 N·m | 8.5% |" in pose
+    assert "| 踝最多能让脚尖向上 | 45° | 50° |" in pose
+    assert "| 踝 前后 | 22.3 N·m | 9.1% |" in pose
     assert "| 踝 前后 | 5.6 N·m | 11.2% |" in pose
     assert pose.count("| 关节 | 出的力矩 | 是峰值的 |") == 2
     hardest = [row for row in table_rows(pose) if row[-1].endswith("%")]
@@ -150,7 +150,7 @@ def test_standing_section_uses_the_same_pass_lines(report):
     standing = section(report, 4)
     assert "| 项目 | Nova（核心版） | Unitree G1 | 合格线 |" in standing
     assert "| 倒了没有 | 没倒 | 没倒 | 不倒 |" in standing
-    assert "| 地面托着的重量 | 78.18 kg | 33.34 kg | 等于体重 |" in standing
+    assert "| 地面托着的重量 | 74.23 kg | 33.34 kg | 等于体重 |" in standing
     assert "| < 2° |" in standing and "| < 5 mm |" in standing and "| < 1 mm |" in standing
     assert "在脚跟前面 12.9 cm（脚底长 25.8 cm）" in standing
     assert "在脚跟前面 9.0 cm（脚底长 18.0 cm）" in standing
@@ -231,7 +231,7 @@ def test_summary_when_the_first_push_knocks_it_over_or_nothing_does(measured):
     first_falls = replace(g1, pushes={FORWARD: g1.pushes[FORWARD][-1:], SIDEWAYS: g1.pushes[SIDEWAYS]})
     never_falls = replace(nova, pushes={FORWARD: nova.pushes[FORWARD][:-1], SIDEWAYS: nova.pushes[SIDEWAYS]})
     summary = section(compose_report((never_falls, first_falls), g1_manifest()), 1)
-    assert "| 往前推，最多扛得住 | 体重的 8%（61 N），再大的没有试 | 体重的 2% 就倒了 |" in summary
+    assert "| 往前推，最多扛得住 | 体重的 8%（58 N），再大的没有试 | 体重的 2% 就倒了 |" in summary
 
 
 # 命令行 ----------------------------------------------------------------------------------------------

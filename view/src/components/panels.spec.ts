@@ -100,7 +100,7 @@ describe('操作', () => {
   it('推一下：默认是"轻"（体重的 4%），写着是多少牛；点方向就往那边推', async () => {
     const sim = fakeSim(novaScene(), novaState())
     const wrapper = show(ControlPanel, sim)
-    expect(wrapper.text()).toContain('力是体重的 4%，约 31 N')
+    expect(wrapper.text()).toContain('力是体重的 4%，约 29 N')
     await button(wrapper, '往左').trigger('click')
     expect(sim.pushBody).toHaveBeenCalledWith('left', 0.04)
     await flushPromises()
@@ -154,9 +154,9 @@ describe('站得怎么样', () => {
     const text = show(BalancePanel, fakeSim(novaScene(), novaState())).text()
     expect(text).toContain('0.0°')
     expect(text).toContain('0.89 m')
-    expect(text).toContain('78.2 kg（体重 78.2 kg）')
-    expect(text).toContain('左脚：39.1 kg（50%）')
-    expect(text).toContain('右脚：39.1 kg（50%）')
+    expect(text).toContain('74.2 kg（体重 74.2 kg）')
+    expect(text).toContain('左脚：37.1 kg（50%）')
+    expect(text).toContain('右脚：37.1 kg（50%）')
     expect(text).not.toContain('脚没有踩在地上')
   })
 
@@ -192,14 +192,14 @@ describe('关节的力矩', () => {
   it('说出现在最费力的关节；按身体的部分分组，腿那一组一开始是打开的', () => {
     const wrapper = show(JointPanel, fakeSim(novaScene(), novaState()))
     expect(wrapper.find('.summary').text().replace(/\s+/g, ' ')).toMatch(
-      /^现在最费力的是 左 踝 前后：23\.\d N·m，是峰值的 8%（轻松）$/,
+      /^现在最费力的是 左 踝 前后：22\.\d N·m，是峰值的 9%（轻松）$/,
     )
     const groups = wrapper.findAll('details')
     expect(groups.map((group) => group.find('summary').text().replace(/\s+/g, ' '))).toEqual([
-      '腿（12 个） 最费力：左 踝 前后 8%',
+      '腿（12 个） 最费力：左 踝 前后 9%',
       '腰（3 个） 最费力：腰 前后 1%',
       '颈（2 个） 最费力：颈 点头 3%',
-      '手臂（14 个） 最费力：左 肩 侧摆 1%',
+      '手臂（14 个） 最费力：左 肘 3%',
       '手（36 个） 最费力：左 拇指 腕掌 弯 2%',
     ])
     expect(groups.map((group) => group.attributes('open') !== undefined)).toEqual([true, false, false, false, false])
@@ -210,9 +210,9 @@ describe('关节的力矩', () => {
     const wrapper = show(JointPanel, fakeSim(novaScene(), novaState()))
     const ankle = wrapper.findAll('tbody tr').find((row) => row.text().includes('左 踝 前后'))!
     const [bar, torque, share] = ankle.findAll('td')
-    expect(torque!.text()).toMatch(/^-23\.\d$/)
-    expect(share!.text()).toBe('8% 轻松')
-    expect(bar!.find('.bar').attributes('aria-label')).toBe('轻松，峰值的 8%')
+    expect(torque!.text()).toMatch(/^-22\.\d$/)
+    expect(share!.text()).toBe('9% 轻松')
+    expect(bar!.find('.bar').attributes('aria-label')).toBe('轻松，峰值的 9%')
   })
 
   it('状态变了，表里的数跟着变（不停在刚打开时的数上）', async () => {
@@ -220,11 +220,11 @@ describe('关节的力矩', () => {
     const wrapper = show(JointPanel, sim)
     const changed = novaState()
     const ankle = novaScene().joints.findIndex((joint) => joint.name === 'left_ankle_pitch')
-    changed.joints.torques_nm[ankle] = -250
+    changed.joints.torques_nm[ankle] = -220
     sim.shown.value = changed
     await flushPromises()
     const row = wrapper.findAll('tbody tr').find((candidate) => candidate.text().includes('左 踝 前后'))!
-    expect(row.findAll('td').map((cell) => cell.text())).toEqual(['', '-250.0', '90% 快到顶了'])
+    expect(row.findAll('td').map((cell) => cell.text())).toEqual(['', '-220.0', '90% 快到顶了'])
     expect(wrapper.find('.summary').text()).toContain('快到顶了')
   })
 
@@ -248,8 +248,8 @@ describe('感觉', () => {
     expect(wrapper.findAll('table')[0]!.findAll('tbody tr').length).toBe(2)
     expect(wrapper.findAll('table')[1]!.findAll('tbody tr').length).toBe(4)
     expect(text).toContain('左踝')
-    expect(text).toContain('左 脚 383 N')
-    expect(text).toContain('右 脚 383 N')
+    expect(text).toContain('左 脚 364 N')
+    expect(text).toContain('右 脚 364 N')
   })
 
   it('基线：有 IMU；没有的传感器写着"这个身体没有"', () => {
