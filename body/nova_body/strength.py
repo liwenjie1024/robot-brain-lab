@@ -163,12 +163,27 @@ def can_do(builder: MotionBuilder, entry: MotionEntry) -> bool:
 
 
 @dataclass(frozen=True)
+class MotionSeries:
+    """一个动作每一帧每个关节的力矩和转速（带正负，顺序和 body.joints 一样）。热的预算要用。"""
+
+    dt_s: float
+    torques_nm: np.ndarray
+    speeds_rad_s: np.ndarray
+
+    @property
+    def duration_s(self) -> float:
+        """这一段有多长。"""
+        return self.dt_s * len(self.torques_nm)
+
+
+@dataclass(frozen=True)
 class MotionDemand:
     """一个动作量出来的要求，只留下算目标、写报告用得着的数。顺序和 body.joints 一样。
 
     做不出来的动作（feasible 是 False）不算逆动力学，力矩、转速都是 nan。
     shared_nm 是并联的每一对关节（按关节的名字）：同一刻两个力矩的绝对值之和的一半，最大是多少。
     edge_margin_m：脚底的压力中心离边最近的时候还有多远；friction_ratio：要的摩擦最大是多少（地面按 0.6 算）。
+    series 是每一帧的力矩和转速（做不出来的动作是 None）。
     """
 
     key: str
@@ -186,6 +201,7 @@ class MotionDemand:
     edge_margin_m: float
     friction_ratio: float
     unbalanced_n: float
+    series: MotionSeries | None = None
 
 
 def measure_motion(body: Body, builder: MotionBuilder, entry: MotionEntry) -> MotionDemand:
@@ -230,6 +246,7 @@ def measure_motion(body: Body, builder: MotionBuilder, entry: MotionEntry) -> Mo
         edge_margin_m=demand.worst_edge_margin_m(),
         friction_ratio=demand.worst_friction_ratio(),
         unbalanced_n=float(demand.unbalanced_n.max()),
+        series=MotionSeries(motion.dt, demand.torques, demand.speeds),
     )
 
 
@@ -337,7 +354,7 @@ class GroupTarget:
 def group_targets(needs: list[JointNeed], demands: list[MotionDemand], body_mass_kg: float) -> list[GroupTarget]:
     """按设计里的关节组汇总 Nova 的需要。核心版没有的关节（没有动作的数）不列。"""
     by_name = {need.name: need for need in needs}
-    members = _group_members()
+    members = group_members()
     targets = []
     for group in JOINT_GROUPS:
         dofs = members.get(group.key)
@@ -374,7 +391,7 @@ def parallel_pairs(body: Body) -> list[tuple[str, str]]:
     names = {joint.name for joint in body.joints}
     pairs = []
     for group in JOINT_GROUPS:
-        dofs = _group_members().get(group.key)
+        dofs = group_members().get(group.key)
         if group.parallel and dofs:
             pairs += [pair for pair in zip(dofs[0], dofs[1], strict=True) if set(pair) <= names]
     return pairs
@@ -385,7 +402,7 @@ def _counts(demand: MotionDemand) -> bool:
 
 
 @cache
-def _group_members() -> dict[str, tuple[tuple[str, ...], ...]]:
+def group_members() -> dict[str, tuple[tuple[str, ...], ...]]:
     """设计里每组关节的每个自由度，对应模型里哪几个关节（左右两侧各一个，中间的一个）。"""
     found: dict[str, dict[int, list[str]]] = {}
     for part in LINKS:

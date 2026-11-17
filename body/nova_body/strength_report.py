@@ -282,16 +282,18 @@ def _targets_section(targets: list[GroupTarget]) -> str:
             rows,
         ),
         "",
-        "**并联的组**（两个驱动器一起带两个自由度）：每个驱动器要出的是同一刻两个力矩之和的一半。"
-        '质量闭环保守地按"两个峰值同时来"算，动作里同时要的其实小一些：',
+        "**并联的组**（两个驱动器一起带两个自由度）：每个驱动器要出的是同一刻两个力矩之和（或之差）的一半，"
+        '比"两个峰值同时来"小。量过的写进 `design.PARALLEL_TARGETS`，质量闭环按它选；'
+        '没量出有意义的数的（腕），还按"两个峰值同时来"：',
         "",
         *_table(
-            ["关节组", "同一刻要的（留了余地、折算以后）", "质量闭环按的"],
+            ["关节组", "同一刻要的（这一遍算的，留了余地、折算以后）", "两个峰值同时来", "质量闭环按的"],
             [
                 [
                     target.group.name,
-                    f"{target.shared_nm:.0f}",
-                    f"{_closure_shared(target):.0f}",
+                    f"{target.shared_nm:.1f}",
+                    f"{sum(target.group.spec_torques_nm(Strength.DAILY)) / 2:.1f}",
+                    f"{target.group.actuator_torques_nm(Strength.DAILY)[0]:.1f}",
                 ]
                 for target in shared
             ],
@@ -509,12 +511,6 @@ def _hardest(body: Body, demand: MotionDemand) -> str:
         return "-"
     index = int(np.nanargmax(demand.torques_nm))
     return f"{_kind(body.joints[index].label)} {demand.torques_nm[index]:.0f}"
-
-
-def _closure_shared(target: GroupTarget) -> float:
-    """质量闭环里并联的每个驱动器按多大的力矩算（两个峰值之和的一半，按 70 kg）。"""
-    torques = target.group.spec_torques_nm(Strength.DAILY)
-    return sum(torques) / len(torques)
 
 
 def _infeasible(demands: list[MotionDemand]) -> list[MotionDemand]:

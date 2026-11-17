@@ -53,6 +53,10 @@ Invoke-Step '身体：基线的报告、图和代码对得上' {
 Invoke-Step '身体：力量的报告和代码对得上' {
     docker compose run --rm body sh -c 'python -m nova_body.strength_report --output /tmp/strength.md > /dev/null && cmp /tmp/strength.md /docs/报告/力量.md'
 }
+# 驱动器的报告要让 Nova 做一遍全部的动作、算一轮家务的热，一两分钟。
+Invoke-Step '身体：驱动器的报告和代码对得上' {
+    docker compose run --rm body sh -c 'python -m nova_body.drive_report --output /tmp/drives.md > /dev/null && cmp /tmp/drives.md /docs/报告/驱动器.md'
+}
 # 网页在这台电脑上直接跑（不在容器里）。依赖已经装好的话，这一步很快。
 Invoke-Step '网页：依赖装好了' {
     npm --prefix $View install --prefer-offline --no-audit --no-fund

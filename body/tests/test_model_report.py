@@ -35,7 +35,7 @@ def test_summary_states_the_counts_and_the_result(report):
     summary = report[report.index("## 1.") : report.index("## 2.")]
     assert "| 自由度 | 75（两只手 44，身体 31） |" in summary
     assert "| 驱动器 | 67（身体 31，每只手 18；" in summary
-    assert "74.23 kg（质量闭环算的是 74.23 kg）" in summary
+    assert "74.71 kg（质量闭环算的是 74.71 kg）" in summary
     assert "站住了" in summary
     assert "没有站好" not in summary
 

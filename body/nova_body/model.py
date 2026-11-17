@@ -8,7 +8,7 @@
 现在是简化的模型，和真机不一样的地方：
 - 膝、踝、腕的连杆和腰椎的推杆没有建，每个关节直接由一个驱动器带动。
 - 每个驱动器是"位置 + 阻尼"的控制，代表驱动器里自己跑的阻抗环；刚度和阻尼以后可以在运行时改。
-  摩擦、力矩-速度、发热到做驱动器的模型（1.6）时再建。
+- 关节的转子惯量、阻尼、干摩擦按选好的驱动器定（drives.py）。并联的一对，两个驱动器都折算到每个关节上。
 - 身体的各段之间不算碰撞，只算和地面的碰撞。
 
 地面、步长、关节位置控制的软硬是测试台定的（bench.py），对每个身体都一样。
@@ -47,7 +47,7 @@ from nova_body.body import (
     StandPose,
     TouchSensor,
 )
-from nova_body.design import CORE_BODY
+from nova_body.design import CORE_BODY, JOINT_GROUPS
 from nova_body.hand import (
     DIGITS,
     PALM_ARCH,
@@ -62,7 +62,7 @@ from nova_body.hand import (
     HandJoint,
     from_hand,
 )
-from nova_body.mass_closure import Assumptions, MassBudget, close_mass, joint_peak_torques_nm
+from nova_body.mass_closure import Assumptions, MassBudget, close_mass, group_drives, joint_peak_torques_nm
 from nova_body.posture import solve_stand_pose
 from nova_body.skeleton import (
     LINKS,
@@ -108,10 +108,6 @@ FORCE_SUFFIX = "_force"
 MOMENT_SUFFIX = "_moment"
 CONTACT_SUFFIX = "_contact"
 
-# 电机转子折算到关节上的惯量，每 N·m 峰值力矩多少 kg·m²。和现有的低减速比关节同一个量级；
-# 做驱动器的模型（1.6）时按电机和减速比定。
-ARMATURE_PER_NM = 1.5e-4
-PASSIVE_DAMPING_PER_NM = 1.0e-3
 # 手里的小电机减速比大，折算的惯量不随力矩变。
 HAND_ARMATURE = 3.0e-4
 HAND_PASSIVE_DAMPING = 5.0e-3
@@ -547,6 +543,8 @@ class _Builder:
         self._torques = {
             group.key: joint_peak_torques_nm(group, assumptions, budget) for group in CORE_BODY.joint_groups()
         }
+        self._drives = {group.key: group_drives(group, budget) for group in CORE_BODY.joint_groups()}
+        self._parallel = {group.key: group.parallel for group in JOINT_GROUPS}
         self.spec = mujoco.MjSpec()
         self.spec.modelname = MODEL_NAME
         # MjSpec 的角度默认是度；这里全部用弧度。
@@ -794,8 +792,24 @@ class _Builder:
             positive=joint.positive,
             peak_torque_nm=torque,
         )
+        armature, damping, friction = self._drive_loads(joint.group, joint.index)
         self._add_joint(
-            body, model_joint, mirror_axis(joint.axis, side), ARMATURE_PER_NM * torque, PASSIVE_DAMPING_PER_NM * torque
+            body, model_joint, mirror_axis(joint.axis, side), armature=armature, damping=damping, friction=friction
+        )
+
+    def _drive_loads(self, group_key: str, index: int) -> tuple[float, float, float]:
+        """驱动器折算到这个关节上的转子惯量、阻尼、干摩擦。
+
+        并联的一对：两个驱动器都跟着每个关节转（转速是两个关节的和、差），所以两个的都算上。
+        """
+        drives = self._drives.get(group_key)
+        if not drives:
+            raise ModelError(f"{group_key} 这一组没有选好的驱动器")
+        acting = drives if self._parallel[group_key] else (drives[index],)
+        return (
+            sum(drive.armature_kg_m2 for drive in acting),
+            sum(drive.viscous_nm_s for drive in acting),
+            sum(drive.friction_nm for drive in acting),
         )
 
     def _add_hand_joint(self, body, joint: HandJoint, side: Side) -> None:
@@ -813,9 +827,18 @@ class _Builder:
             follow_ratio=joint.follow_ratio,
         )
         armature = FOLLOWER_ARMATURE if joint.peak_torque_nm is None else HAND_ARMATURE
-        self._add_joint(body, model_joint, mirror_axis(joint.axis, side), armature, HAND_PASSIVE_DAMPING)
+        self._add_joint(
+            body,
+            model_joint,
+            mirror_axis(joint.axis, side),
+            armature=armature,
+            damping=HAND_PASSIVE_DAMPING,
+            friction=0.0,
+        )
 
-    def _add_joint(self, body, joint: ModelJoint, axis: Vector, armature: float, passive_damping: float) -> None:
+    def _add_joint(
+        self, body, joint: ModelJoint, axis: Vector, *, armature: float, damping: float, friction: float
+    ) -> None:
         body.add_joint(
             name=joint.name,
             type=mujoco.mjtJoint.mjJNT_HINGE,
@@ -823,7 +846,8 @@ class _Builder:
             range=[joint.lower_rad, joint.upper_rad],
             limited=mujoco.mjtLimited.mjLIMITED_TRUE,
             armature=armature,
-            damping=passive_damping,
+            damping=damping,
+            frictionloss=friction,
         )
         self.joints.append(joint)
 

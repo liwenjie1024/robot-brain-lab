@@ -477,3 +477,24 @@ def test_foot_patch_is_the_sole(nova):
     """脚底着地的那一块就是脚底的盒子：长是脚长，宽是脚宽。"""
     assert nova.body.foot_length_m == nova.dimensions.foot_length
     assert nova.body.foot_width_m == nova.dimensions.foot_width
+
+
+def test_joint_inertia_damping_and_friction_come_from_the_drives(nova):
+    """关节的转子惯量、阻尼、干摩擦按选好的驱动器：膝就是它的驱动器；并联的踝，两个驱动器都折算到每个关节上。"""
+    model = nova.model
+    drives = nova.budget.drives
+
+    def joint_values(name: str) -> tuple[float, float, float]:
+        dof = model.joint(name).dofadr[0]
+        return float(model.dof_armature[dof]), float(model.dof_damping[dof]), float(model.dof_frictionloss[dof])
+
+    knee = drives["knee"][0]
+    assert joint_values("left_knee") == pytest.approx((knee.armature_kg_m2, knee.viscous_nm_s, knee.friction_nm))
+    pair = drives["ankle"]
+    expected = (
+        sum(drive.armature_kg_m2 for drive in pair),
+        sum(drive.viscous_nm_s for drive in pair),
+        sum(drive.friction_nm for drive in pair),
+    )
+    for name in ("left_ankle_pitch", "left_ankle_roll", "right_ankle_roll"):
+        assert joint_values(name) == pytest.approx(expected)

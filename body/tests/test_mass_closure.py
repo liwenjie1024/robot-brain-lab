@@ -6,8 +6,16 @@ import pytest
 
 from nova_body.actuator_mass import ActuatorMassModel, best_today_model, conservative_model
 from nova_body.anthropometry import Segment, segment_count
-from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON, Strength
-from nova_body.mass_closure import Assumptions, MassBudget, MassClosureError, close_mass, joint_peak_torques_nm
+from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON, PARALLEL_TARGETS, Strength
+from nova_body.drives import Cooling, continuous_torque_for_mass_nm
+from nova_body.mass_closure import (
+    Assumptions,
+    MassBudget,
+    MassClosureError,
+    close_mass,
+    group_drives,
+    joint_peak_torques_nm,
+)
 
 BASE = Assumptions()
 
@@ -122,8 +130,8 @@ def test_heavy_payload_raises_shoulder_and_elbow_torque():
 def test_dual_winding_adds_mass_only_with_fallbacks():
     """双绕组多出来的重量，只在算保底的东西时才加。"""
     model = best_today_model()
-    with_fallbacks = line_for(close_core(), "knee")
-    without_fallbacks = line_for(close_core(replace(BASE, fallbacks=False)), "knee")
+    with_fallbacks = line_for(close_core(), "hip_pitch")
+    without_fallbacks = line_for(close_core(replace(BASE, fallbacks=False)), "hip_pitch")
     assert with_fallbacks.mass_each_kg == pytest.approx(model.mass_kg(with_fallbacks.torque_nm) * 1.10)
     assert without_fallbacks.mass_each_kg == pytest.approx(model.mass_kg(without_fallbacks.torque_nm))
 
@@ -146,6 +154,72 @@ def test_fixed_mass_groups_count_their_actuators():
     passive_toes = line_for(budget, "toes_arch")
     assert passive_toes.count == 2
     assert passive_toes.total_kg == pytest.approx(0.2)
+
+
+# 驱动器的模型（1.6 步） ------------------------------------------------------------------------------
+
+
+def test_every_driven_group_records_its_drives():
+    """闭合以后每组关节（一侧）每个驱动器选的样子都记下来；按固定重量估的组没有。"""
+    budget = close_core()
+    for group in CORE_BODY.joint_groups():
+        assert len(group_drives(group, budget)) == group.actuators
+    eyes = next(group for group in FULL_BODY.joint_groups() if group.key == "eyes")
+    assert group_drives(eyes, close_mass(FULL_BODY, BASE, best_today_model())) == ()
+
+
+def test_knee_is_sized_by_heat_and_can_hold_what_it_must():
+    """膝要一直出的力（蹲着干活）比照峰值选的驱动器能一直出的大：按发热选，更重，正好能一直出这么大。"""
+    knee = line_for(close_core(), "knee")
+    drive = knee.drive
+    assert drive.sized_by_heat
+    assert drive.motor_mass_kg > best_today_model().mass_kg(knee.torque_nm)
+    assert drive.continuous_torque_nm == pytest.approx(drive.required_continuous_nm)
+    assert drive.continuous_torque_nm == pytest.approx(
+        continuous_torque_for_mass_nm(drive.motor_mass_kg, Cooling.LIQUID)
+    )
+
+
+def test_parallel_pairs_use_the_share_measured_in_the_motions():
+    """并联的踝：每个驱动器按动作里同一刻要的选（随体重放大），比两个峰值同时来小；两个是一样的零件，并成一行。"""
+    budget = close_core()
+    ankle = [line for line in budget.actuators if line.key == "ankle"]
+    assert len(ankle) == 1
+    assert ankle[0].count == 4
+    assert ankle[0].torque_nm == pytest.approx(PARALLEL_TARGETS["ankle"] * budget.total_kg / 70.0, rel=1e-6)
+
+
+def test_without_continuous_needs_only_the_peak_counts():
+    """人的峰值那一档不算发热：每个驱动器的重量就是峰值那条线说的。"""
+    budget = close_core(replace(BASE, strength=Strength.HUMAN_PEAK))
+    model = best_today_model()
+    for line in budget.actuators:
+        assert not line.drive.sized_by_heat
+        assert line.drive.motor_mass_kg == pytest.approx(model.mass_kg(line.torque_nm))
+
+
+def test_taller_bodies_are_heavier():
+    """身高越高越重：随体重的力矩按"体重 x 身高"放大，皮肤按身高²变。"""
+    masses = [close_core(replace(BASE, height_m=height)).total_kg for height in (1.60, 1.70, 1.80)]
+    assert masses == sorted(masses)
+    assert len(set(masses)) == 3
+
+
+def test_leg_torque_scales_with_mass_times_height():
+    """腿的力矩 = 70 kg、1.70 m 时的目标 x 体重的倍数 x 身高的倍数。"""
+    tall = replace(BASE, height_m=1.87)
+    budget = close_core(tall)
+    knee = group_of("knee").daily_torques_nm[0]
+    expected = knee * budget.total_kg / 70.0 * 1.87 / 1.70
+    assert line_for(budget, "knee").torque_nm == pytest.approx(expected, rel=1e-6)
+
+
+def test_skin_scales_with_the_body_surface():
+    """皮肤、软外壳、外衣按表面积（身高²）变：1.70 m 时是写的数。"""
+    assert BASE.skin_kg == pytest.approx(BASE.skin_and_cover_kg)
+    assert replace(BASE, height_m=1.87).skin_kg == pytest.approx(BASE.skin_and_cover_kg * 1.21)
+    budget = close_core(replace(BASE, height_m=1.87))
+    assert budget.by_category["皮肤、软外壳、外衣"] == pytest.approx(BASE.skin_and_cover_kg * 1.21)
 
 
 def item_for(budget: MassBudget, key: str):
@@ -233,10 +307,11 @@ def test_fails_when_actuators_are_too_heavy_to_close():
         ({"structure_fraction": 0.7, "wiring_fraction": 0.3}, "加起来必须小于 1"),
         ({"battery_kwh": -1.0}, "电池的电量不能小于 0"),
         ({"height_m": 0.0}, "身高必须大于 0"),
+        ({"reference_height_m": 0.0}, "参考身高必须大于 0"),
         ({"strength_factor": 0.0}, "力量的倍数必须大于 0"),
         ({"dual_winding_overhead": -0.1}, "双绕组多出来的比例不能小于 0"),
     ],
-    ids=["骨架和线占满了", "电池是负数", "身高是 0", "力量是 0", "双绕组的比例是负数"],
+    ids=["骨架和线占满了", "电池是负数", "身高是 0", "参考身高是 0", "力量是 0", "双绕组的比例是负数"],
 )
 def test_rejects_impossible_assumptions(changes, message):
     """假设不合理时拒绝。"""

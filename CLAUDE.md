@@ -38,6 +38,8 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  ik（全身的逆运动学） inverse（逆动力学：每个关节要的力矩、撑着的地方受的力）
                  gait（走路、楼梯的计划：脚步、压力中心、重心的路） motions（第一次考试的动作，一帧一帧）
                  strength（从动作算力量的目标，几个进程一起算） strength_report（力量的报告）
+                 drives（驱动器的模型：按峰值、发热、转速选；力矩-转速、降额、热的两个节点）
+                 heat（一轮家务的热预算） drive_report（驱动器和热的报告）
                  nova_body，基线: third_party（按清单下载、核对外面来的文件） baseline（把 Unitree G1 放上测试台）
                  baseline_report（基线和 Nova 比的报告）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
@@ -62,6 +64,7 @@ docker compose run --rm body python -m nova_body.model_report  # 生成身体的
 docker compose run --rm body python -m nova_body.third_party   # 下载、核对基线的模型（已经有的只核对，不连网）
 docker compose run --rm body python -m nova_body.baseline_report  # 基线和 Nova 跑同一套测试，报告和图写进 docs/报告/基线身体.md
 docker compose run --rm body python -m nova_body.strength_report  # 两个身体做全部的动作、算力量，报告写进 docs/报告/力量.md（约两分半钟）
+docker compose run --rm body python -m nova_body.drive_report  # 选驱动器、算一轮家务的热，报告写进 docs/报告/驱动器.md（一两分钟）
 .\scripts\check.ps1                                            # 提交前的检查：外面来的文件、格式、规则、测试、报告和代码对得上、网页
 .\scripts\view.ps1                                             # 打开网页：启动仿真（容器）和网页的服务，再打开浏览器
 docker compose up -d sim                                       # 只启动实时的仿真（http://127.0.0.1:8870）。改了 Python 代码要 docker compose restart sim
@@ -80,6 +83,8 @@ npm --prefix view run test                                     # 网页的测试
 - **力量的目标从动作算**（1.5 步，`strength.py`）：改了动作、身体、质量的假设以后，跑力量的报告；"这一遍算的目标"和
   `design.DAILY_TARGETS` 差得多（超过几个百分点）就把新的数写进去，再跑一遍（换了目标，体重和身体都变，要算两遍才到头）。
   报告是确定的（同样的代码算出同样的字），提交前的检查会比对。
+- **驱动器按发热也要选**（1.6 步，`drives.py`、`heat.py`）：一直要出的力矩写在 `design.CONTINUOUS_TARGETS`，和力量的目标一样要算两遍到头（驱动器的报告第 6 节比"这一遍算的"和"设计里的"）。改了动作、家务的循环、驱动器的数以后，跑驱动器的报告。转速只改绕组和电流，不改重量；并联的两个驱动器是同一种零件。
+  热的数（电机常数、每公斤散多少热）来自公开的产品数和一篇论文，不是实测的；报告里写的是估计。
 - **逆运动学一帧一帧解，要防它在一帧里跳**（跳一下就算出几倍的假力矩，1.5 步踩过）：关节的边是软的（离边 5° 开始不划算）；
   每帧拉向上一帧（`Goals.near`）；原地的动作给关键时刻（`key_times`），所有关节一起慢慢变；只用腿的动作里手臂和头不动
   （`leg_ik`）；逆动力学算加速度以前先低通滤一下（约 6 Hz，和量人的动作一样）。看一个动作可不可信：

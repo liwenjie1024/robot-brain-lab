@@ -4,6 +4,7 @@ import pytest
 
 from nova_body.anthropometry import Segment
 from nova_body.design import (
+    CONTINUOUS_TARGETS,
     CORE_BODY,
     DAILY_TARGETS,
     FULL_BODY,
@@ -11,11 +12,13 @@ from nova_body.design import (
     HAND_HYBRID,
     HAND_IN_HAND,
     JOINT_GROUPS,
+    PARALLEL_TARGETS,
     Drive,
     JointGroup,
     Strength,
     Tag,
 )
+from nova_body.drives import Cooling
 
 
 def test_full_body_matches_spec():
@@ -51,12 +54,79 @@ def test_every_hand_has_22_joints(hand):
     assert hand.dof == 22
 
 
+def group(key: str) -> JointGroup:
+    return next(group for group in JOINT_GROUPS if group.key == key)
+
+
 def test_parallel_pair_shares_the_load():
-    """并联的一组：每个驱动器出两个力矩之和的一半（踝按人的峰值：250 和 100，各出 175）。"""
-    ankle = next(group for group in JOINT_GROUPS if group.key == "ankle")
+    """并联的一组：人的峰值按"两个峰值同时来"（踝 250 和 100，各出 175）；做家务的那一档按动作里同一刻要的，
+    比两个峰值同时来小。"""
+    ankle = group("ankle")
     assert ankle.actuator_torques_nm(Strength.HUMAN_PEAK) == (175.0, 175.0)
     pitch, roll = ankle.daily_torques_nm
-    assert ankle.actuator_torques_nm(Strength.DAILY) == ((pitch + roll) / 2, (pitch + roll) / 2)
+    assert ankle.actuator_torques_nm(Strength.DAILY) == (PARALLEL_TARGETS["ankle"],) * 2
+    assert PARALLEL_TARGETS["ankle"] < (pitch + roll) / 2
+
+
+def test_parallel_pair_without_a_measured_share_assumes_both_peaks_at_once():
+    """动作里没量出同一刻要多少的并联组（腕）：还按两个峰值同时来。"""
+    wrist = group("wrist")
+    assert wrist.shared_torque_nm is None
+    assert wrist.actuator_torques_nm(Strength.DAILY) == (25.0, 25.0)
+
+
+def test_parallel_pair_motors_are_the_same_part():
+    """并联的两个驱动器是同一种零件：一直要出的取两个里大的；转得快的按两个转速之和。"""
+    ankle = group("ankle")
+    first, second = CONTINUOUS_TARGETS["ankle"]
+    assert ankle.actuator_continuous_nm(Strength.DAILY) == (max(first, second),) * 2
+    assert ankle.actuator_speeds_rad_s() == (sum(ankle.speeds_rad_s),) * 2
+
+
+def test_continuous_needs_only_count_for_the_daily_strength():
+    """人的峰值那一档不算发热（只是拿来比）；没算过一直要出多少的组是 0。"""
+    knee = group("knee")
+    assert knee.actuator_continuous_nm(Strength.DAILY) == CONTINUOUS_TARGETS["knee"]
+    assert knee.actuator_continuous_nm(Strength.HUMAN_PEAK) == (0.0,)
+    assert group("neck_lower").actuator_continuous_nm(Strength.DAILY) == (0.0,)
+    assert group("eyes").actuator_continuous_nm(Strength.DAILY) == ()
+
+
+def test_heavy_joints_and_the_loaded_arm_joints_are_liquid_cooled():
+    """液冷的：髋、膝、踝、腰（机体规格第 12 节），和端着东西时一直出力的肩前后、肘（1.6 步的热预算）。"""
+    liquid = {group.key for group in JOINT_GROUPS if group.cooling is Cooling.LIQUID}
+    assert liquid == {
+        "lumbar_pitch_roll",
+        "lumbar_yaw",
+        "hip_pitch",
+        "hip_roll",
+        "hip_yaw",
+        "knee",
+        "ankle",
+        "shoulder_pitch",
+        "elbow",
+    }
+
+
+def test_every_continuous_target_has_one_value_per_actuator():
+    """写进设计的一直要出的力矩：每个驱动器一个，都不是负的，组的名字都认得。"""
+    for key, values in CONTINUOUS_TARGETS.items():
+        assert len(values) == group(key).actuators
+        assert all(value >= 0 for value in values)
+
+
+def test_rejects_a_shared_torque_on_a_group_that_is_not_parallel():
+    """不是并联的组写了同一刻每个驱动器要的力矩：拒绝。"""
+    with pytest.raises(ValueError, match="不是并联的组"):
+        JointGroup("x", "x", Segment.THIGH, True, 1, 1, Drive.ROTARY, Tag.CORE, (10.0,), shared_torque_nm=5.0)
+
+
+def test_rejects_continuous_targets_whose_count_differs_from_the_actuators():
+    """一直要出的力矩的个数和驱动器对不上：拒绝。"""
+    with pytest.raises(ValueError, match="有 1 个驱动器"):
+        JointGroup(
+            "x", "x", Segment.THIGH, True, 1, 1, Drive.ROTARY, Tag.CORE, (10.0,), continuous_torques_nm=(1.0, 2.0)
+        )
 
 
 def test_fixed_mass_group_has_no_torques():

@@ -154,9 +154,9 @@ describe('站得怎么样', () => {
     const text = show(BalancePanel, fakeSim(novaScene(), novaState())).text()
     expect(text).toContain('0.0°')
     expect(text).toContain('0.89 m')
-    expect(text).toContain('74.2 kg（体重 74.2 kg）')
-    expect(text).toContain('左脚：37.1 kg（50%）')
-    expect(text).toContain('右脚：37.1 kg（50%）')
+    expect(text).toContain('74.7 kg（体重 74.7 kg）')
+    expect(text).toContain('左脚：37.4 kg（50%）')
+    expect(text).toContain('右脚：37.4 kg（50%）')
     expect(text).not.toContain('脚没有踩在地上')
   })
 
@@ -248,8 +248,8 @@ describe('感觉', () => {
     expect(wrapper.findAll('table')[0]!.findAll('tbody tr').length).toBe(2)
     expect(wrapper.findAll('table')[1]!.findAll('tbody tr').length).toBe(4)
     expect(text).toContain('左踝')
-    expect(text).toContain('左 脚 364 N')
-    expect(text).toContain('右 脚 364 N')
+    expect(text).toContain('左 脚 366 N')
+    expect(text).toContain('右 脚 366 N')
   })
 
   it('基线：有 IMU；没有的传感器写着"这个身体没有"', () => {

@@ -11,7 +11,7 @@ from pathlib import Path
 from nova_body.actuator_mass import QDD_SAMPLES, ActuatorMassModel, best_today_model, conservative_model
 from nova_body.anthropometry import SEGMENT_NAMES, Segment, human_segment_mass_kg
 from nova_body.design import CORE_BODY, FULL_BODY, HAND_ALL_TENDON, BodyVariant, Strength
-from nova_body.mass_closure import Assumptions, MassBudget, MassClosureError, close_mass
+from nova_body.mass_closure import ActuatorLine, Assumptions, MassBudget, MassClosureError, close_mass
 
 DEFAULT_OUTPUT = Path("/docs/报告/质量闭环.md")
 LIGHT_HOME_STRENGTH = 0.5
@@ -146,18 +146,35 @@ def _detail_section(title: str, budget: MassBudget) -> str:
         "",
         "### 驱动器（不含手）",
         "",
-        "| 关节 | 个数 | 每个的峰值力矩 | 每个多重 | 一共 | 备注 |",
-        "|---|---|---|---|---|---|",
+        '"要一直出的"是一轮家务里要一直出的力矩（[驱动器的报告](驱动器.md)）；重量取峰值和发热里要求大的那个。',
+        "",
+        "| 关节 | 个数 | 每个的峰值力矩 | 要一直出的 | 冷却 | 每个多重 | 一共 | 备注 |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for line in sorted(budget.actuators, key=lambda item: item.total_kg, reverse=True):
-        torque = "-" if line.torque_nm is None else f"{line.torque_nm:.0f} N·m"
-        note = (
-            "超出了样本的范围，是外推的" if line.beyond_data else ("按固定的重量估的" if line.torque_nm is None else "")
-        )
         rows.append(
-            f"| {line.name} | {line.count} | {torque} | {line.mass_each_kg:.2f} kg | {line.total_kg:.1f} kg | {note} |"
+            f"| {line.name} | {line.count} | {_torque(line.torque_nm)} | "
+            f"{_torque(None if line.drive is None else line.drive.required_continuous_nm)} | "
+            f"{'-' if line.drive is None else line.drive.cooling.value} | "
+            f"{line.mass_each_kg:.2f} kg | {line.total_kg:.1f} kg | {_actuator_note(line)} |"
         )
     return "\n".join(rows)
+
+
+def _torque(value: float | None) -> str:
+    return "-" if value is None else f"{value:.0f} N·m"
+
+
+def _actuator_note(line: ActuatorLine) -> str:
+    """这一行驱动器的备注：重量怎么来的。"""
+    if line.drive is None:
+        return "按固定的重量估的"
+    notes = []
+    if line.drive.sized_by_heat:
+        notes.append("按发热选的（要一直出的力大）")
+    if line.beyond_data:
+        notes.append("峰值超出了样本的范围，是外推的")
+    return "；".join(notes)
 
 
 def _assumptions_section(base: Assumptions) -> str:
@@ -165,13 +182,20 @@ def _assumptions_section(base: Assumptions) -> str:
     items = [
         ("身高", f"{base.height_m:g} m"),
         ("驱动器的力量", f"{base.strength.value}；动作没算出目标的关节（颈、肩转、前臂转、腕）用人的峰值"),
-        ("规格里的峰值力矩对应的体重", f"{base.reference_body_mass_kg:g} kg；腿和躯干的力矩按实际体重等比例放大"),
+        (
+            "规格里的力矩对应的体重和身高",
+            f'{base.reference_body_mass_kg:g} kg、{base.reference_height_m:g} m；腿和躯干的力矩按"体重 x 身高"放大',
+        ),
+        (
+            "驱动器怎么选",
+            "峰值力矩和一直要出的力矩（发热）里要求大的那个；怎么冷却按机体规格第 12 节（见驱动器的报告）",
+        ),
         ("骨架", f"占总重的 {base.structure_fraction:.0%}"),
         ("线", f"占总重的 {base.wiring_fraction:.0%}"),
         ("电池", f"{base.battery_kwh:g} kWh，每公斤 {base.battery_wh_per_kg:g} Wh（高倍率的电池包）"),
         ("电脑", f"{base.computer_kg:g} kg"),
         ("液冷（泵、散热器、冷却液、管）", cooling),
-        ("皮肤、软外壳、外衣", f"{base.skin_and_cover_kg:g} kg"),
+        ("皮肤、软外壳、外衣", f"{base.skin_and_cover_kg:g} kg（身高 {base.reference_height_m:g} m 时；按身高²变）"),
         ("传感器（相机、麦克风等）", f"{base.sensors_kg:g} kg"),
         ("脚里的东西（踝的六轴力传感器、脚底的压力皮肤、脚板）", f"每只脚 {base.foot_hardware_kg:g} kg"),
         ("超级电容", f"{base.supercapacitor_kg:g} kg"),
@@ -211,9 +235,9 @@ def _limits_section() -> str:
         [
             "## 7. 这个模型还不知道的",
             "",
-            "- **速度**：只按峰值力矩算重量，没算要转多快。每个关节要的转速在[力量的报告](力量.md)里，"
-            "按转速、发热选电机是 1.6 步的事。",
-            "- **持续的力**：峰值只能出一小会儿。能一直出多大的力要看散热，这里没算。",
+            "- **驱动器**：按峰值和发热选（[驱动器的报告](驱动器.md)）。"
+            "电机常数、每公斤能散多少热来自公开的产品数和一篇论文，"
+            "没有实测；转速只改绕组和电流，不改重量。",
             "- **推杆**：没有核实过的重量数据，先按旋转驱动器算。",
             "- **手**：三种手的重量都是估的。",
             "- **骨架**：按总重的固定比例算，没有按受力算。",

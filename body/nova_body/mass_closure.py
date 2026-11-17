@@ -2,13 +2,17 @@
 
 为什么要迭代：腿和躯干要出的力矩跟着体重变。身体重了，腿的驱动器就要更大、更重，身体又更重。
 这个循环停下来的地方，就是 Nova 的体重。
+
+每个驱动器按两样选（drives.size_drive）：要出的峰值力矩，和一轮家务里要一直出的力矩（发热）。
+"随体重"的力矩按"体重 x 身高"放大：同样的姿势，身体重一倍、各段长一倍，力矩就是四倍。
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from nova_body.actuator_mass import ActuatorMassModel
 from nova_body.anthropometry import MASS_FRACTION, Segment, segment_count, segment_length_m
 from nova_body.design import HAND_COUNT, BodyVariant, JointGroup, Strength, TorqueRule
+from nova_body.drives import DriveSpec, size_drive
 
 GRAVITY_M_S2 = 9.81
 TOLERANCE_KG = 1e-6
@@ -52,17 +56,19 @@ class MassClosureError(RuntimeError):
 class Assumptions:
     """算质量时用的假设。每个数都会写进报告。
 
-    reference_body_mass_kg：机体规格里的峰值力矩是按这个体重定的。
+    reference_body_mass_kg、reference_height_m：机体规格里的力矩是按这个体重、这个身高定的。
     strength：驱动器按哪一档力量定（做家务的动作要的，或者人的峰值）。
     strength_factor：力量的倍数。"轻的家用身体"用 0.5。
     structure_fraction、wiring_fraction：骨架、线各占总重的比例。
     fallbacks：要不要算上保底的东西（双绕组多出来的重量、超级电容、制动器、安全板）。
     arm_payload_kg、arm_dynamic_factor：手臂伸直端着这么重的东西，再乘上动起来的倍数。
     foot_hardware_kg：一只脚里的东西：踝的六轴力传感器约 0.3 kg、脚底的压力皮肤约 0.1 kg、硬的脚板约 0.2 kg。
+    skin_and_cover_kg 是身高 1.70 m 时的；皮肤和外衣按表面积（身高²）变。
     """
 
     height_m: float = 1.70
     reference_body_mass_kg: float = 70.0
+    reference_height_m: float = 1.70
     strength: Strength = Strength.DAILY
     strength_factor: float = 1.0
     structure_fraction: float = 0.20
@@ -87,6 +93,7 @@ class Assumptions:
         positive = {
             "身高": self.height_m,
             "参考体重": self.reference_body_mass_kg,
+            "参考身高": self.reference_height_m,
             "力量的倍数": self.strength_factor,
             "电池每公斤的电量": self.battery_wh_per_kg,
         }
@@ -115,10 +122,24 @@ class Assumptions:
         if self.structure_fraction + self.wiring_fraction >= 1:
             raise ValueError("骨架和线的比例加起来必须小于 1")
 
+    @property
+    def height_scale(self) -> float:
+        """身高是参考身高的几倍。"""
+        return self.height_m / self.reference_height_m
+
+    @property
+    def skin_kg(self) -> float:
+        """这个身高的皮肤、软外壳和外衣（按表面积变）。"""
+        return self.skin_and_cover_kg * self.height_scale**2
+
 
 @dataclass(frozen=True)
 class ActuatorLine:
-    """报告里驱动器的一行：同一组关节里要出一样力矩的驱动器。"""
+    """报告里驱动器的一行：同一组关节里要求一样的驱动器。
+
+    torque_nm 是要的峰值力矩；drive 是选好的驱动器（能一直出多大、怎么发热）。
+    按固定重量算的组没有这两样（None）。
+    """
 
     key: str
     name: str
@@ -127,6 +148,7 @@ class ActuatorLine:
     torque_nm: float | None
     mass_each_kg: float
     beyond_data: bool
+    drive: DriveSpec | None = None
 
     @property
     def total_kg(self) -> float:
@@ -167,6 +189,7 @@ class MassBudget:
     actuators: tuple[ActuatorLine, ...]
     items: tuple[FixedItem, ...]
     spread_kg: float
+    drives: dict[str, tuple[DriveSpec, ...]] = field(default_factory=dict)
     iterations: int = 0
     growth_per_added_kg: float = 0.0
 
@@ -190,6 +213,11 @@ def joint_peak_torques_nm(group: JointGroup, assumptions: Assumptions, budget: M
         _required_torque_nm(group.torque_rule, torque, assumptions, guess)
         for torque in group.spec_torques_nm(assumptions.strength)
     )
+
+
+def group_drives(group: JointGroup, budget: MassBudget) -> tuple[DriveSpec, ...]:
+    """闭合以后，这组关节（一侧）每个驱动器选的样子，顺序和组里的驱动器一样。按固定重量估的组返回空。"""
+    return budget.drives.get(group.key, ())
 
 
 @dataclass(frozen=True)
@@ -224,8 +252,13 @@ def _evaluate(
     extra_kg: float,
 ) -> MassBudget:
     """按猜的体重算一遍各部分的重量，得到新的体重。"""
+    drives = {
+        group.key: _group_drives(group, assumptions, model, guess)
+        for group in variant.joint_groups()
+        if group.fixed_mass_kg is None
+    }
     lines = tuple(
-        line for group in variant.joint_groups() for line in _actuator_lines(group, assumptions, model, guess)
+        line for group in variant.joint_groups() for line in _actuator_lines(group, model, drives.get(group.key, ()))
     )
     items = _fixed_items(variant, assumptions, extra_kg)
 
@@ -233,7 +266,7 @@ def _evaluate(
     by_category[CATEGORY_ACTUATORS] = sum(line.total_kg for line in lines)
     for item in items:
         by_category[item.category] += item.total_kg
-    by_category[CATEGORY_SKIN] = assumptions.skin_and_cover_kg
+    by_category[CATEGORY_SKIN] = assumptions.skin_kg
     # 骨架和线按总重的比例算，所以总重 = 其它东西 ÷ (1 - 两个比例)。
     shared_fraction = assumptions.structure_fraction + assumptions.wiring_fraction
     total = sum(by_category.values()) / (1 - shared_fraction)
@@ -244,7 +277,7 @@ def _evaluate(
     for part in (*lines, *items):
         located[part.segment] += part.total_kg / segment_count(part.segment)
     # 骨架、线、皮肤没有固定的位置，按人各段的质量比例分到各段。
-    spread = by_category[CATEGORY_STRUCTURE] + by_category[CATEGORY_WIRING] + assumptions.skin_and_cover_kg
+    spread = by_category[CATEGORY_STRUCTURE] + by_category[CATEGORY_WIRING] + assumptions.skin_kg
     by_segment = {segment: located[segment] + MASS_FRACTION[segment] * spread for segment in Segment}
     return MassBudget(
         variant_name=variant.name,
@@ -255,6 +288,7 @@ def _evaluate(
         actuators=lines,
         items=items,
         spread_kg=spread,
+        drives=drives,
     )
 
 
@@ -307,10 +341,31 @@ def _fixed_items(variant: BodyVariant, assumptions: Assumptions, extra_kg: float
     return tuple(item for item in items if item.total_kg > 0)
 
 
-def _actuator_lines(
+def _group_drives(
     group: JointGroup, assumptions: Assumptions, model: ActuatorMassModel, guess: _Guess
-) -> list[ActuatorLine]:
-    """一组关节的驱动器各多重。要出一样力矩的并成一行。"""
+) -> tuple[DriveSpec, ...]:
+    """按猜的体重，给这组关节（一侧）的每个驱动器选一个：峰值、一直要出的、转速、怎么冷却。"""
+    overhead = assumptions.dual_winding_overhead if (group.dual_winding and assumptions.fallbacks) else 0.0
+    return tuple(
+        size_drive(
+            _required_torque_nm(group.torque_rule, peak, assumptions, guess),
+            _required_continuous_nm(group.torque_rule, continuous, assumptions, guess),
+            speed,
+            group.cooling,
+            model,
+            mass_overhead=overhead,
+        )
+        for peak, continuous, speed in zip(
+            group.actuator_torques_nm(assumptions.strength),
+            group.actuator_continuous_nm(assumptions.strength),
+            group.actuator_speeds_rad_s(),
+            strict=True,
+        )
+    )
+
+
+def _actuator_lines(group: JointGroup, model: ActuatorMassModel, drives: tuple[DriveSpec, ...]) -> list[ActuatorLine]:
+    """一组关节的驱动器各多重。选出来一样的并成一行。"""
     if group.fixed_mass_kg is not None:
         # 被动的组没有驱动器，按一侧一个机构来数。
         parts_per_side = max(group.actuators, 1)
@@ -325,22 +380,21 @@ def _actuator_lines(
                 beyond_data=False,
             )
         ]
-    overhead = assumptions.dual_winding_overhead if (group.dual_winding and assumptions.fallbacks) else 0.0
-    counts: dict[float, int] = {}
-    for spec_torque in group.actuator_torques_nm(assumptions.strength):
-        torque = _required_torque_nm(group.torque_rule, spec_torque, assumptions, guess)
-        counts[torque] = counts.get(torque, 0) + group.sides
+    counts: dict[DriveSpec, int] = {}
+    for drive in drives:
+        counts[drive] = counts.get(drive, 0) + group.sides
     return [
         ActuatorLine(
             key=group.key,
             name=group.name,
             segment=group.segment,
             count=count,
-            torque_nm=torque,
-            mass_each_kg=model.mass_kg(torque) * (1 + overhead),
-            beyond_data=model.is_beyond_data(torque),
+            torque_nm=drive.peak_torque_nm,
+            mass_each_kg=drive.mass_kg,
+            beyond_data=model.is_beyond_data(drive.peak_torque_nm),
+            drive=drive,
         )
-        for torque, count in counts.items()
+        for drive, count in counts.items()
     ]
 
 
@@ -348,12 +402,25 @@ def _required_torque_nm(rule: TorqueRule, spec_torque_nm: float, assumptions: As
     """这个驱动器实际要出多大的峰值力矩。"""
     scaled = spec_torque_nm * assumptions.strength_factor
     if rule is TorqueRule.BODY_MASS:
-        return scaled * guess.total_kg / assumptions.reference_body_mass_kg
+        return scaled * _body_scale(assumptions, guess)
     if rule is TorqueRule.SHOULDER_LOAD:
         return max(scaled, _arm_holding_torque_nm(assumptions, guess.by_segment, from_shoulder=True))
     if rule is TorqueRule.ELBOW_LOAD:
         return max(scaled, _arm_holding_torque_nm(assumptions, guess.by_segment, from_shoulder=False))
     return scaled
+
+
+def _required_continuous_nm(
+    rule: TorqueRule, spec_continuous_nm: float, assumptions: Assumptions, guess: _Guess
+) -> float:
+    """这个驱动器在一轮家务里要一直出的力矩。"随体重"的和峰值一样放大，别的不变。"""
+    scaled = spec_continuous_nm * assumptions.strength_factor
+    return scaled * _body_scale(assumptions, guess) if rule is TorqueRule.BODY_MASS else scaled
+
+
+def _body_scale(assumptions: Assumptions, guess: _Guess) -> float:
+    """ "随体重"的力矩放大几倍：体重是参考的几倍，乘上身高是参考的几倍（力臂跟着变长）。"""
+    return guess.total_kg / assumptions.reference_body_mass_kg * assumptions.height_scale
 
 
 def _arm_holding_torque_nm(
