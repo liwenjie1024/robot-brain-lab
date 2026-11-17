@@ -1,7 +1,7 @@
 // 网页眼里的仿真：连没连上、身体的样子、现在的状态、能发的命令。画面的各个部分都从这里拿。
 import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import type { ComputedRef, Ref, ShallowRef } from 'vue'
-import { readScene } from '@/sim/contracts'
+import { readSceneText } from '@/sim/contracts'
 import { shouldShow } from '@/sim/display'
 import { SimLink } from '@/sim/link'
 import type { LinkStatus, SocketLike } from '@/sim/link'
@@ -13,6 +13,11 @@ import type { Scene } from '@/generated/scene'
 
 /** 仿真在哪：开发服务器把 /sim 转给仿真（vite.config.ts）。 */
 export const SIM_BASE = '/sim'
+
+/** 一个身体的样子在哪拿。按身体拿：拿的中间测试台上换了身体，拿到的也还是要的那个。 */
+export function sceneUrl(body: string): string {
+  return `${SIM_BASE}/scene/${encodeURIComponent(body)}`
+}
 
 export interface LoadProgress {
   done: number
@@ -76,37 +81,48 @@ export function createSim(dependencies: SimDependencies = {}): Sim {
   const problem = ref<string | null>(null)
   let latestState: State | null = null
   let shownAtMs = 0
+  /** 测试台上现在是哪个身体（招呼和状态里说的）。 */
+  let benchBody: string | null = null
   let loadingBody: string | null = null
   let loadNumber = 0
+  /** 手里这份样子的原文。重新连上以后再拿一次，一个字都没变就不用重新搭、不用再拿网格。 */
+  let sceneText: string | null = null
 
-  /** 状态是不是手里这个样子的身体的。不是的话数组的长短都对不上，不能用。 */
-  const matchesScene = (state: State | null): state is State => state !== null && state.body === scene.value?.body
+  /** 状态能不能用：是手里这个样子的身体的，而且没在拿样子（再拿的时候身体可能改过，数组的长短会对不上）。 */
+  const matchesScene = (state: State | null): state is State =>
+    state !== null && loadingBody === null && state.body === scene.value?.body
 
   async function loadScene(body: string): Promise<void> {
     const number = ++loadNumber
     loadingBody = body
     sceneError.value = null
-    loading.value = { done: 0, total: 1 }
+    // 再拿一次手里这个身体的样子（重新连上了）：先不挡住画面，样子真的变了才说"正在拿"。
+    const again = scene.value?.body === body
+    if (!again) loading.value = { done: 0, total: 1 }
     try {
-      const response = await request(`${SIM_BASE}/scene`)
+      const response = await request(sceneUrl(body))
       if (!response.ok) throw new Error(`仿真没有给出身体的样子（${response.status}）`)
-      const loaded = readScene(await response.json())
+      const text = await response.text()
+      // 拿的中间又换了身体、又重新连上了的话，这一次拿到的不要了。
+      if (number !== loadNumber) return
+      if (again && text === sceneText) {
+        finishLoading(false)
+        return
+      }
+      const loaded = readSceneText(text)
       loading.value = { done: 1, total: 1 + loaded.meshes.length }
       const loadedMeshes = new Map<number, MeshData>()
       await Promise.all(
         loaded.meshes.map(async (mesh) => {
-          loadedMeshes.set(mesh.id, await fetchMesh(SIM_BASE, mesh.id, request))
+          loadedMeshes.set(mesh.id, await fetchMesh(SIM_BASE, body, mesh.id, request))
           if (number === loadNumber && loading.value) loading.value = { ...loading.value, done: loading.value.done + 1 }
         }),
       )
-      // 拿的中间又换了身体的话，这一次拿到的不要了。
       if (number !== loadNumber) return
       meshes.value = loadedMeshes
       scene.value = loaded
-      // 画面上还留着上一个身体的状态的话，拿掉：它和新的样子对不上。
-      shown.value = matchesScene(latestState) ? latestState : null
-      loading.value = null
-      loadingBody = null
+      sceneText = text
+      finishLoading(true)
     } catch (error) {
       if (number !== loadNumber) return
       loading.value = null
@@ -115,10 +131,18 @@ export function createSim(dependencies: SimDependencies = {}): Sim {
     }
   }
 
-  /** 测试台上的身体和手里的样子不一样了（刚连上，或者换了身体）：去拿新的。 */
+  /** 拿完了。有能用的新状态就用；样子变了的话，画面上留着的旧状态不能再用（和新的样子对不上）。 */
+  function finishLoading(changed: boolean): void {
+    loading.value = null
+    loadingBody = null
+    if (matchesScene(latestState)) shown.value = latestState
+    else if (changed) shown.value = null
+  }
+
+  /** 测试台上的身体和手里的样子不一样了（换了身体）：去拿新的。 */
   function followBody(body: string): void {
     if (scene.value?.body === body || loadingBody === body) return
-    // 出过错的不自己反复去拿，等人点"再试一次"。
+    // 出过错的不自己反复去拿（状态一秒来 30 条），等人点"再试一次"，或者等下一次连上。
     if (sceneError.value !== null) return
     void loadScene(body)
   }
@@ -131,10 +155,15 @@ export function createSim(dependencies: SimDependencies = {}): Sim {
       },
       onHello: (hello) => {
         problem.value = null
-        followBody(hello.body)
+        benchBody = hello.body
+        // 每次连上都再拿一次样子：仿真可能重启过、身体可能改过；上次没拿到的，也再试一次。
+        // 以前收到的状态是上一次连着时的，不再用。
+        latestState = null
+        void loadScene(hello.body)
       },
       onState: (state) => {
         latestState = state
+        benchBody = state.body
         followBody(state.body)
         if (!matchesScene(state)) return
         const time = now()
@@ -164,8 +193,7 @@ export function createSim(dependencies: SimDependencies = {}): Sim {
     stop: () => simLink.close(),
     retryLink: () => simLink.retryNow(),
     retryScene: () => {
-      sceneError.value = null
-      void loadScene(latestState?.body ?? scene.value?.body ?? '')
+      if (benchBody !== null) void loadScene(benchBody)
     },
     reset: () => simLink.send({ type: 'reset' }),
     pause: () => simLink.send({ type: 'pause' }),

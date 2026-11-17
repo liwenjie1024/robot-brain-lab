@@ -72,7 +72,7 @@ export interface Scene {
    */
   shapes: Shape[]
   /**
-   * 用到的网格。点和面从 /mesh/{id} 拿
+   * 用到的网格。点和面从 /mesh/{body}/{id} 拿（body 是这个身体的记号）
    */
   meshes: Mesh[]
   /**

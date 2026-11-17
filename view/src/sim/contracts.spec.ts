@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import g1SceneJson from '@/test/fixtures/g1.scene.json'
 import novaSceneJson from '@/test/fixtures/nova.scene.json'
 import novaStateJson from '@/test/fixtures/nova.state.json'
-import { ContractError, readMessage, readScene } from '@/sim/contracts'
+import { ContractError, readMessage, readScene, readSceneText } from '@/sim/contracts'
 
 describe('身体的样子', () => {
   it('真的仿真给的两个身体的样子都读得懂', () => {
@@ -26,6 +26,13 @@ describe('身体的样子', () => {
 
   it('不是对象的东西：拒绝', () => {
     for (const value of [null, 'nova', 3, []]) expect(() => readScene(value)).toThrow(ContractError)
+  })
+
+  it('从原文读：读得懂真的样子；不是 JSON、不合规约都拒绝，说清楚', () => {
+    expect(readSceneText(JSON.stringify(novaSceneJson)).name).toBe('Nova（核心版）')
+    expect(() => readSceneText('{"body":')).toThrow('身体的样子不是 JSON')
+    expect(() => readSceneText('')).toThrow(ContractError)
+    expect(() => readSceneText('{"body":"nova"}')).toThrow('身体的样子读不懂')
   })
 })
 

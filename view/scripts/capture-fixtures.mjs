@@ -47,7 +47,7 @@ const { socket, next, send } = await connect()
 await mkdir(target, { recursive: true })
 for (const body of ['nova', 'g1']) {
   await send({ type: 'body', body })
-  const scene = await (await fetch(`${SIM}/scene`)).json()
+  const scene = await (await fetch(`${SIM}/scene/${body}`)).json()
   if (scene.body !== body) throw new Error(`要的是 ${body}，仿真给的是 ${scene.body}`)
   const state = await next((message) => message.type === 'state' && message.body === body && message.time_s >= SETTLE_S)
   await writeFile(join(target, `${body}.scene.json`), JSON.stringify(scene) + '\n')

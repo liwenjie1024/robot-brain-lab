@@ -28,23 +28,34 @@ class FakeSocket implements SocketLike {
 }
 
 interface Served {
-  scene: unknown
-  /** 拿"样子"的时候要不要失败一次。 */
+  /** 每个身体的样子，按记号放。没有的身体答 404。 */
+  scenes: Record<string, unknown>
+  /** 拿"样子"的时候要不要失败。 */
   failScene?: boolean
   sceneStatus?: number
+  /** 拿"样子"的请求先压着，等测试放行（看先后颠倒的时候用）。 */
+  holdScenes?: boolean
 }
 
+const SCENE_URL = /^\/sim\/scene\/([^/]+)$/
+
 /** 假的仿真：一个连接，和一个按网址给东西的 fetch。 */
-function setup(served: Served = { scene: novaSceneJson }) {
+function setup(served: Served = { scenes: { nova: novaSceneJson } }) {
   const sockets: FakeSocket[] = []
   const asked: string[] = []
+  const held: (() => void)[] = []
   let clock = 1000
   const request = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
     asked.push(url)
-    if (url === '/sim/scene') {
+    const sceneOf = SCENE_URL.exec(url)
+    if (sceneOf) {
+      // 仿真答的是被问的那一刻它手里的样子。
+      const scene = served.scenes[decodeURIComponent(sceneOf[1]!)]
+      if (served.holdScenes) await new Promise<void>((release) => held.push(release))
       if (served.failScene) throw new Error('网络不通')
-      return new Response(JSON.stringify(served.scene), { status: served.sceneStatus ?? 200 })
+      if (scene === undefined) return new Response('没有这个身体', { status: 404 })
+      return new Response(JSON.stringify(scene), { status: served.sceneStatus ?? 200 })
     }
     if (url.startsWith('/sim/mesh/')) return new Response(triangleMeshBytes())
     return new Response('', { status: 404 })
@@ -68,16 +79,27 @@ function setup(served: Served = { scene: novaSceneJson }) {
     sockets,
     asked,
     served,
+    held,
     tick: (ms: number) => (clock += ms),
     /** 等拿"样子"和网格的那几步都走完。 */
     settle: () => vi.waitFor(() => expect(sim.loading.value).toBeNull()),
+    /** 断开，马上再连上。返回新的连接。 */
+    reconnect: () => {
+      sockets.at(-1)!.onclose?.()
+      sim.retryLink()
+      const next = sockets.at(-1)!
+      next.onopen?.()
+      return next
+    },
+    scenesAsked: () => asked.filter((url) => SCENE_URL.test(url)),
+    meshesAsked: () => asked.filter((url) => url.startsWith('/sim/mesh/')),
   }
 }
 
 const hello = (body: string) => ({ type: 'hello', body, episode: 0 })
 
 describe('刚连上', () => {
-  it('收到招呼就去拿身体的样子；拿到之前没有样子、没有状态', async () => {
+  it('收到招呼就去拿这个身体的样子；拿到之前没有样子、没有状态', async () => {
     const { sim, socket, asked, settle } = setup()
     expect(sim.link.value).toBe('open')
     expect(sim.stale.value).toBe(false)
@@ -85,18 +107,19 @@ describe('刚连上', () => {
     socket.receive(hello('nova'))
     expect(sim.loading.value).toEqual({ done: 0, total: 1 })
     await settle()
-    expect(asked).toEqual(['/sim/scene'])
+    expect(asked).toEqual(['/sim/scene/nova'])
     expect(sim.scene.value!.name).toBe('Nova（核心版）')
     expect(sim.sceneError.value).toBeNull()
     expect(sim.shown.value).toBeNull()
     expect(sim.latest()).toBeNull()
   })
 
-  it('基线：样子拿到以后把 35 个网格都拿来，才算拿到', async () => {
-    const { sim, socket, asked, settle } = setup({ scene: g1SceneJson })
+  it('基线：样子拿到以后把它的 35 个网格都拿来（按身体拿），才算拿到', async () => {
+    const { sim, socket, settle, meshesAsked } = setup({ scenes: { g1: g1SceneJson } })
     socket.receive(hello('g1'))
     await settle()
-    expect(asked.filter((url) => url.startsWith('/sim/mesh/')).length).toBe(35)
+    expect(meshesAsked().length).toBe(35)
+    expect(meshesAsked().every((url) => url.startsWith('/sim/mesh/g1/'))).toBe(true)
     expect(sim.meshes.value.size).toBe(35)
     expect(sim.scene.value!.body).toBe('g1')
   })
@@ -117,7 +140,7 @@ describe('刚连上', () => {
     socket.receive(novaStateJson)
     socket.receive(novaStateJson)
     await settle()
-    expect(asked).toEqual(['/sim/scene'])
+    expect(asked).toEqual(['/sim/scene/nova'])
     expect(sim.scene.value!.body).toBe('nova')
   })
 })
@@ -159,12 +182,11 @@ describe('状态', () => {
 
 describe('换身体', () => {
   it('状态说测试台上换成了别的身体：去拿新的样子；拿到之前不用新身体的状态，画面上不留旧身体的数', async () => {
-    const { sim, socket, served, settle } = setup()
+    const { sim, socket, settle } = setup({ scenes: { nova: novaSceneJson, g1: g1SceneJson } })
     socket.receive(hello('nova'))
     await settle()
     socket.receive(novaStateJson)
     expect(sim.shown.value!.body).toBe('nova')
-    served.scene = g1SceneJson
     socket.receive(g1StateJson)
     expect(sim.loading.value).not.toBeNull()
     expect(sim.latest()).toBeNull()
@@ -175,9 +197,8 @@ describe('换身体', () => {
   })
 
   it('拿的中间又换回去了：只留最后要的那个', async () => {
-    const { sim, socket, served, settle } = setup({ scene: g1SceneJson })
+    const { sim, socket, settle } = setup({ scenes: { g1: g1SceneJson, nova: novaSceneJson } })
     socket.receive(hello('g1'))
-    served.scene = novaSceneJson
     socket.receive(novaStateJson)
     await settle()
     await vi.waitFor(() => expect(sim.scene.value?.body).toBe('nova'))
@@ -187,31 +208,98 @@ describe('换身体', () => {
 
 describe('样子没拿到', () => {
   it('网络不通：记下原因，不反复去拿；点"再试一次"才再拿', async () => {
-    const { sim, socket, asked, served } = setup({ scene: novaSceneJson, failScene: true })
+    const { sim, socket, asked, served } = setup({ scenes: { nova: novaSceneJson }, failScene: true })
     socket.receive(hello('nova'))
     await vi.waitFor(() => expect(sim.sceneError.value).toBe('网络不通'))
     expect(sim.loading.value).toBeNull()
     socket.receive(novaStateJson)
     socket.receive(novaStateJson)
-    expect(asked).toEqual(['/sim/scene'])
+    expect(asked).toEqual(['/sim/scene/nova'])
     served.failScene = false
     sim.retryScene()
     expect(sim.sceneError.value).toBeNull()
     await vi.waitFor(() => expect(sim.scene.value?.body).toBe('nova'))
-    expect(asked).toEqual(['/sim/scene', '/sim/scene'])
+    expect(asked).toEqual(['/sim/scene/nova', '/sim/scene/nova'])
   })
 
   it('仿真答的不是 200：说出来', async () => {
-    const { sim, socket } = setup({ scene: {}, sceneStatus: 500 })
+    const { sim, socket } = setup({ scenes: { nova: {} }, sceneStatus: 500 })
     socket.receive(hello('nova'))
     await vi.waitFor(() => expect(sim.sceneError.value).toBe('仿真没有给出身体的样子（500）'))
   })
 
   it('仿真给的样子不合规约：说出来，不用它', async () => {
-    const { sim, socket } = setup({ scene: { body: 'nova' } })
+    const { sim, socket } = setup({ scenes: { nova: { body: 'nova' } } })
     socket.receive(hello('nova'))
     await vi.waitFor(() => expect(sim.sceneError.value).toContain('身体的样子读不懂'))
     expect(sim.scene.value).toBeNull()
+  })
+
+  it('还不知道测试台上是哪个身体：点"再试一次"什么也不拿', () => {
+    const { sim, asked } = setup()
+    sim.retryScene()
+    expect(asked).toEqual([])
+  })
+})
+
+describe('重新连上', () => {
+  it('再拿一次样子；一个字都没变：不挡住画面、不重新搭、不再拿网格', async () => {
+    const { sim, socket, settle, reconnect, scenesAsked, meshesAsked } = setup({ scenes: { g1: g1SceneJson } })
+    socket.receive(hello('g1'))
+    await settle()
+    const before = sim.scene.value
+    const again = reconnect()
+    again.receive(hello('g1'))
+    again.receive(g1StateJson)
+    expect(sim.loading.value).toBeNull()
+    expect(sim.latest()).toBeNull()
+    await vi.waitFor(() => expect(sim.latest()).not.toBeNull())
+    expect(scenesAsked()).toEqual(['/sim/scene/g1', '/sim/scene/g1'])
+    expect(meshesAsked().length).toBe(35)
+    expect(sim.scene.value).toBe(before)
+    expect(sim.shown.value!.body).toBe('g1')
+  })
+
+  it('仿真重启时身体改过（样子变了）：换成新的样子；断开以前的状态不再用', async () => {
+    const { sim, socket, served, settle, reconnect } = setup()
+    socket.receive(hello('nova'))
+    await settle()
+    socket.receive(novaStateJson)
+    expect(sim.shown.value).not.toBeNull()
+    served.scenes = { nova: { ...novaSceneJson, mass_kg: 80 } }
+    const again = reconnect()
+    again.receive(hello('nova'))
+    await vi.waitFor(() => expect(sim.scene.value?.mass_kg).toBe(80))
+    expect(sim.shown.value).toBeNull()
+    expect(sim.latest()).toBeNull()
+    again.receive(novaStateJson)
+    expect(sim.shown.value!.body).toBe('nova')
+  })
+
+  it('上次没拿到样子：重新连上以后自己再试一次', async () => {
+    const { sim, socket, served, reconnect } = setup({ scenes: { nova: novaSceneJson }, failScene: true })
+    socket.receive(hello('nova'))
+    await vi.waitFor(() => expect(sim.sceneError.value).toBe('网络不通'))
+    served.failScene = false
+    reconnect().receive(hello('nova'))
+    expect(sim.sceneError.value).toBeNull()
+    await vi.waitFor(() => expect(sim.scene.value?.body).toBe('nova'))
+    expect(sim.sceneError.value).toBeNull()
+  })
+
+  it('上一次的样子比这一次的晚到：晚到的旧样子不要', async () => {
+    const { sim, socket, served, held, reconnect } = setup({ scenes: { nova: novaSceneJson }, holdScenes: true })
+    socket.receive(hello('nova'))
+    served.scenes = { nova: { ...novaSceneJson, mass_kg: 80 } }
+    reconnect().receive(hello('nova'))
+    expect(held.length).toBe(2)
+    held[1]!()
+    await vi.waitFor(() => expect(sim.scene.value?.mass_kg).toBe(80))
+    held[0]!()
+    await new Promise((done) => setTimeout(done, 0))
+    expect(sim.scene.value!.mass_kg).toBe(80)
+    expect(sim.loading.value).toBeNull()
+    expect(sim.sceneError.value).toBeNull()
   })
 })
 

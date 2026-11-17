@@ -1,4 +1,5 @@
-"""给网页的服务的测试：拿样子、拿网格、连上来看状态、发命令；先做完命令再答复；只让认识的网页连。
+"""给网页的服务的测试：按身体拿样子、拿网格，连上来看状态、发命令；先做完命令再答复；只让认识的网页连；
+一个网页收不动了不拖累别的。
 
 前一半直接测"收到一条命令怎么办""钟走了怎么办"，不经过网络；后一半真的起一个服务连上去。
 """
@@ -10,14 +11,27 @@ import aiohttp
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from nova_sim import server
 from nova_sim.bodies import G1, NOVA, Choice
+from nova_sim.channel import MAX_PENDING, ClientChannel
 from nova_sim.live import LiveSim
 from nova_sim.protocol import MESSAGE, SCENE, problems
 from nova_sim.scene import SceneError, drawn_meshes, mesh_payload
-from nova_sim.server import PROGRAM_ERROR, STATE_EVERY_TICKS, TICK_S, Hub, create_app
+from nova_sim.server import (
+    PROGRAM_ERROR,
+    STATE_EVERY_TICKS,
+    TICK_S,
+    Hub,
+    NoSuchBodyError,
+    create_app,
+    pump,
+    run,
+)
 
 ALLOWED_ORIGIN = "http://localhost:5280"
 RECEIVE_TIMEOUT_S = 5.0
+# 看仿真自己跑一会儿：这么久里应该发出十几条状态。
+RUN_FOR_S = 0.5
 
 
 def command(kind: str, identifier: int = 1, **fields) -> str:
@@ -33,7 +47,7 @@ def hub(choices) -> Hub:
 @pytest.fixture
 def watched(hub) -> Hub:
     """有一个网页连着的测试台（没有网页连着的时候仿真不走）。"""
-    hub.clients.add(object())
+    hub.clients.add(ClientChannel())
     return hub
 
 
@@ -43,8 +57,8 @@ def watched(hub) -> Hub:
 def test_starts_with_nova_on_the_bench(hub):
     """一开始测试台上是 Nova，第 0 回。"""
     assert (hub.sim.key, hub.sim.episode) == (NOVA, 0)
-    assert hub.scene()["body"] == NOVA
-    assert problems(SCENE, hub.scene()) == []
+    assert hub.scene(NOVA)["body"] == NOVA
+    assert problems(SCENE, hub.scene(NOVA)) == []
 
 
 def test_does_each_command_and_then_acknowledges_it(watched):
@@ -111,7 +125,7 @@ def test_switches_to_the_baseline_and_back(watched):
     hub = watched
     assert hub.receive(command("body", 1, body=G1))["ok"]
     assert (hub.sim.key, hub.sim.episode) == (G1, 1)
-    scene = hub.scene()
+    scene = hub.scene(hub.sim.key)
     assert (scene["body"], scene["name"]) == (G1, "Unitree G1")
     assert hub.sim.state()["body"] == G1
     assert hub.receive(command("body", 2, body=NOVA))["ok"]
@@ -135,7 +149,14 @@ def test_refuses_a_body_that_is_not_there(nova):
     missing = hub.receive(command("body", 2, body=G1))
     assert (missing["ok"], missing["reason"]) == (False, "Unitree G1 现在用不了：文件还没下载")
     assert (hub.sim.key, hub.sim.episode) == (NOVA, 0)
-    assert hub.scene()["choices"][1] == {"body": G1, "name": "Unitree G1", "available": False, "reason": "文件还没下载"}
+    assert hub.scene(NOVA)["choices"][1] == {
+        "body": G1,
+        "name": "Unitree G1",
+        "available": False,
+        "reason": "文件还没下载",
+    }
+    with pytest.raises(NoSuchBodyError, match="Unitree G1 现在用不了：文件还没下载"):
+        hub.scene(G1)
 
 
 def test_cannot_start_with_a_body_that_is_not_there(nova):
@@ -145,19 +166,34 @@ def test_cannot_start_with_a_body_that_is_not_there(nova):
         Hub(choices, first=G1)
 
 
-# 网格 ------------------------------------------------------------------------------------------------
+# 样子和网格 ------------------------------------------------------------------------------------------
 
 
-def test_serves_only_the_meshes_of_the_body_on_the_bench(watched, g1):
-    """网格只给现在这个身体用到的：Nova 没有网格；换成 G1 以后拿得到。"""
-    hub = watched
-    with pytest.raises(SceneError, match="现在这个身体没有用到第 0 个网格"):
-        hub.mesh(0)
-    hub.receive(command("body", 1, body=G1))
+def test_gives_the_scene_of_the_body_asked_for_not_the_one_on_the_bench(hub):
+    """按记号给样子：测试台上是 Nova 时也拿得到 G1 的（拿的中间换了身体，拿到的还是要的那个）。"""
+    assert hub.sim.key == NOVA
+    scene = hub.scene(G1)
+    assert (scene["body"], scene["name"]) == (G1, "Unitree G1")
+    assert problems(SCENE, scene) == []
+    assert hub.scene(NOVA)["body"] == NOVA
+
+
+def test_no_scene_for_a_body_that_is_not_there(hub):
+    """没有这个身体：报错，说为什么。"""
+    with pytest.raises(NoSuchBodyError, match="没有叫 atlas 的身体"):
+        hub.scene("atlas")
+
+
+def test_serves_only_the_meshes_each_body_uses(hub, g1):
+    """网格按身体给，只给这个身体画出来要用的：Nova 没有网格；G1 的网格不在测试台上也拿得到。"""
     mesh = min(drawn_meshes(g1))
-    assert hub.mesh(mesh) == mesh_payload(g1.model, mesh)
-    with pytest.raises(SceneError, match="没有用到第 999 个网格"):
-        hub.mesh(999)
+    with pytest.raises(SceneError, match=f"Nova（核心版） 没有用到第 {mesh} 个网格"):
+        hub.mesh(NOVA, mesh)
+    assert hub.mesh(G1, mesh) == mesh_payload(g1.model, mesh)
+    with pytest.raises(SceneError, match="Unitree G1 没有用到第 999 个网格"):
+        hub.mesh(G1, 999)
+    with pytest.raises(NoSuchBodyError, match="没有叫 atlas 的身体"):
+        hub.mesh("atlas", mesh)
 
 
 # 钟走了 ----------------------------------------------------------------------------------------------
@@ -220,37 +256,64 @@ async def next_message(socket, kind: str) -> dict:
 
 
 def test_health_and_scene_over_http(hub):
-    """/health 说服务活着；/scene 给出现在这个身体的样子，合规约。"""
+    """/health 说服务活着；/scene/记号 给出那个身体的样子，合规约（不在测试台上的也给）。"""
 
     async def scenario(client):
         health = await client.get("/health")
-        scene = await client.get("/scene")
-        return health.status, await health.json(), scene.status, scene.content_type, await scene.json()
+        results = [(health.status, await health.json())]
+        for body in (NOVA, G1):
+            scene = await client.get(f"/scene/{body}")
+            results.append((scene.status, scene.content_type, await scene.json()))
+        return results
 
-    health_status, health, scene_status, content_type, scene = serve(hub, scenario)
-    assert (health_status, health) == (200, {"ok": True})
-    assert (scene_status, content_type) == (200, "application/json")
-    assert problems(SCENE, scene) == []
-    assert scene["name"] == "Nova（核心版）"
+    health, nova, g1 = serve(hub, scenario)
+    assert health == (200, {"ok": True})
+    for (status, content_type, scene), name in ((nova, "Nova（核心版）"), (g1, "Unitree G1")):
+        assert (status, content_type) == (200, "application/json")
+        assert problems(SCENE, scene) == []
+        assert scene["name"] == name
+
+
+def test_scene_of_an_unknown_body_over_http_is_not_found(hub):
+    """没有这个身体、没说要哪个身体：404，说为什么。"""
+
+    async def scenario(client):
+        unknown = await client.get("/scene/atlas")
+        bare = await client.get("/scene")
+        return unknown.status, await unknown.text(), bare.status
+
+    unknown_status, unknown_text, bare_status = serve(hub, scenario)
+    assert (unknown_status, unknown_text) == (404, "没有叫 atlas 的身体")
+    assert bare_status == 404
 
 
 def test_mesh_over_http(hub, g1):
-    """/mesh/编号 给出网格的二进制；不是数、没有的编号、别的身体的网格都是 404。"""
-    hub.receive(command("body", 1, body=G1))
+    """/mesh/记号/编号 给出网格的二进制（G1 不在测试台上也给）；不是数、没有的编号、
+    这个身体没用到的网格、没有的身体都是 404。"""
     mesh = min(drawn_meshes(g1))
+    bad_paths = (
+        f"/mesh/{G1}/abc",
+        f"/mesh/{G1}/99999",
+        f"/mesh/{G1}/-1",
+        f"/mesh/{NOVA}/{mesh}",
+        f"/mesh/atlas/{mesh}",
+    )
 
     async def scenario(client):
-        good = await client.get(f"/mesh/{mesh}")
+        good = await client.get(f"/mesh/{G1}/{mesh}")
         results = [(good.status, good.content_type, await good.read())]
-        for path in ("/mesh/abc", "/mesh/99999", "/mesh/-1"):
+        for path in bad_paths:
             bad = await client.get(path)
             results.append((bad.status, await bad.text()))
         return results
 
-    good, not_a_number, unknown, negative = serve(hub, scenario)
+    good, not_a_number, unknown, negative, other_body, no_body = serve(hub, scenario)
     assert good == (200, "application/octet-stream", mesh_payload(g1.model, mesh))
-    assert not_a_number[0] == unknown[0] == negative[0] == 404
-    assert "没有用到第 99999 个网格" in unknown[1]
+    for bad in (not_a_number, unknown, negative, other_body, no_body):
+        assert bad[0] == 404
+    assert "Unitree G1 没有用到第 99999 个网格" in unknown[1]
+    assert f"没有用到第 {mesh} 个网格" in other_body[1]
+    assert no_body[1] == "没有叫 atlas 的身体"
 
 
 def test_page_gets_a_hello_then_states_that_move_on(hub):
@@ -399,10 +462,84 @@ def test_oversized_message_closes_the_connection(hub):
     assert hub.sim.episode == 0
 
 
+# 收得慢的网页 ----------------------------------------------------------------------------------------
+
+
+class QuickSocket:
+    """收得快的网页：发来的都记下来。"""
+
+    def __init__(self) -> None:
+        self.received: list[dict] = []
+
+    async def send_str(self, data: str) -> None:
+        self.received.append(json.loads(data))
+
+
+class StuckSocket:
+    """收不动的网页：发给它的第一条就永远发不完。"""
+
+    async def send_str(self, data: str) -> None:
+        await asyncio.Event().wait()
+
+
+def test_a_page_that_cannot_keep_up_holds_up_nobody(hub):
+    """一个网页收不动了：仿真照常往前走，别的网页照常收到一条条新的状态；给它的只积压最新的一条状态。"""
+
+    async def scenario():
+        stuck, quick = ClientChannel(), ClientChannel()
+        hub.clients.update({stuck, quick})
+        page = QuickSocket()
+        tasks = [
+            asyncio.create_task(pump(stuck, StuckSocket())),
+            asyncio.create_task(pump(quick, page)),
+            asyncio.create_task(run(hub)),
+        ]
+        await asyncio.sleep(RUN_FOR_S)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return page.received, stuck.pending
+
+    received, stuck_pending = asyncio.run(scenario())
+    times = [message["time_s"] for message in received]
+    assert len(times) >= 5
+    assert times == sorted(times) and times[-1] > times[0]
+    assert stuck_pending == 1
+    assert hub.sim.time_s >= RUN_FOR_S / 2
+
+
+def test_a_page_that_stops_reading_is_closed(hub, monkeypatch):
+    """一个网页只发命令、一条也不收：积压超过上限就关掉它（网页会自己再连）。命令都照做了，服务照常。"""
+
+    async def never_sends(_channel, _socket):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(server, "pump", never_sends)
+
+    async def scenario(client):
+        async with client.ws_connect("/ws") as socket:
+            for identifier in range(MAX_PENDING + 1):
+                await socket.send_str(command("pause", identifier))
+            closing = await socket.receive(timeout=RECEIVE_TIMEOUT_S)
+            code = socket.close_code
+        health = await client.get("/health")
+        for _ in range(100):
+            if not hub.clients:
+                break
+            await asyncio.sleep(0.01)
+        return closing.type, code, health.status, len(hub.clients)
+
+    kind, code, health, remaining = serve(hub, scenario)
+    assert kind is aiohttp.WSMsgType.CLOSE
+    assert code == aiohttp.WSCloseCode.TRY_AGAIN_LATER
+    assert (health, remaining) == (200, 0)
+    assert not hub.sim.running
+
+
 def test_fresh_simulation_per_hub(choices):
     """每个测试台有自己的仿真：一个里面推倒了，另一个不受影响。"""
     first, second = Hub(choices), Hub(choices)
-    first.clients.add(object())
+    first.clients.add(ClientChannel())
     first.receive(command("control", 1, on=False))
     for _ in range(120):
         first.tick(TICK_S)

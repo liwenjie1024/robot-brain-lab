@@ -32,9 +32,14 @@ export function decodeMesh(buffer: ArrayBuffer): MeshData {
   return { vertices, triangles }
 }
 
-/** 从仿真拿一个网格。 */
-export async function fetchMesh(baseUrl: string, id: number, request: typeof fetch = fetch): Promise<MeshData> {
-  const response = await request(`${baseUrl}/mesh/${id}`)
+/** 从仿真拿一个身体的一个网格。按身体拿：拿的中间测试台上换了身体，拿到的也还是这个身体的。 */
+export async function fetchMesh(
+  baseUrl: string,
+  body: string,
+  id: number,
+  request: typeof fetch = fetch,
+): Promise<MeshData> {
+  const response = await request(`${baseUrl}/mesh/${encodeURIComponent(body)}/${id}`)
   if (!response.ok) throw new Error(`拿不到第 ${id} 个网格（${response.status}）`)
   return decodeMesh(await response.arrayBuffer())
 }

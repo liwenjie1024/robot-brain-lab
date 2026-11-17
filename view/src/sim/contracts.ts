@@ -20,20 +20,28 @@ function firstProblem(check: ValidateFunction): string {
   return `${error.instancePath || '最外面'}：${error.message ?? '不合规约'}`
 }
 
+function parseJson(text: string, problem: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new ContractError(problem)
+  }
+}
+
 /** 检查仿真给的"身体的样子"。不合规约就报错。 */
 export function readScene(value: unknown): Scene {
   if (!checkScene(value)) throw new ContractError(`身体的样子读不懂（${firstProblem(checkScene)}）`)
   return value
 }
 
+/** 把仿真给的"身体的样子"的原文读出来、检查一遍。不是 JSON、不合规约都报错。 */
+export function readSceneText(text: string): Scene {
+  return readScene(parseJson(text, '身体的样子不是 JSON'))
+}
+
 /** 把仿真发来的一条消息读出来、检查一遍。不是 JSON、不合规约都报错。 */
 export function readMessage(text: string): Message {
-  let value: unknown
-  try {
-    value = JSON.parse(text)
-  } catch {
-    throw new ContractError('仿真发来的消息不是 JSON')
-  }
+  const value = parseJson(text, '仿真发来的消息不是 JSON')
   if (!checkMessage(value)) throw new ContractError(`仿真发来的消息读不懂（${firstProblem(checkMessage)}）`)
   return value
 }

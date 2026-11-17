@@ -48,19 +48,29 @@ describe('网格的二进制', () => {
 })
 
 describe('从仿真拿网格', () => {
-  it('按编号去拿，解出来', async () => {
+  it('按身体和编号去拿，解出来', async () => {
     const asked: string[] = []
     const request = (async (url: string) => {
       asked.push(url)
       return new Response(triangleMeshBytes())
     }) as typeof fetch
-    const mesh = await fetchMesh('/sim', 7, request)
-    expect(asked).toEqual(['/sim/mesh/7'])
+    const mesh = await fetchMesh('/sim', 'g1', 7, request)
+    expect(asked).toEqual(['/sim/mesh/g1/7'])
     expect(mesh.triangles.length).toBe(3)
+  })
+
+  it('身体的记号里有网址里不能直接写的字：转成网址的写法', async () => {
+    const asked: string[] = []
+    const request = (async (url: string) => {
+      asked.push(url)
+      return new Response(triangleMeshBytes())
+    }) as typeof fetch
+    await fetchMesh('/sim', 'a b/c', 1, request)
+    expect(asked).toEqual(['/sim/mesh/a%20b%2Fc/1'])
   })
 
   it('仿真说没有这个网格：报错，带着编号', async () => {
     const request = (async () => new Response('没有', { status: 404 })) as typeof fetch
-    await expect(fetchMesh('/sim', 9, request)).rejects.toThrow('拿不到第 9 个网格（404）')
+    await expect(fetchMesh('/sim', 'g1', 9, request)).rejects.toThrow('拿不到第 9 个网格（404）')
   })
 })
