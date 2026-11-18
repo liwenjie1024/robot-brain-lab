@@ -3,6 +3,7 @@
 #   docker compose run --rm body pytest                         测试
 #   docker compose run --rm body python -m nova_body.mass_report  算一次质量闭环，报告写进 docs/报告
 #   docker compose up -d sim                                    实时的仿真，给网页看（改了代码要 docker compose restart sim）
+#   docker compose run --rm train                               训练用的容器（显卡）：看显卡能不能用；训练见 train/README.md
 name: nova
 
 # 两个服务用同一个镜像，都挂着源码：改了代码不用重新做镜像。
@@ -17,12 +18,13 @@ services:
   body:
     <<: *python
     # 挂上 docs：报告直接写进仓库。挂上 third_party：外面来的东西（基线的模型）下载到这里，不做进镜像。
-    # 挂上 contracts：消息的规约。
+    # 挂上 contracts：消息的规约。挂上 results：练出来的策略在这里，考的结果也写在这里（都不提交）。
     volumes:
       - ./body:/app
       - ./docs:/docs
       - ./third_party:/third_party
       - ./contracts:/contracts
+      - ./results:/results
 
   # 实时的仿真和给网页的服务：一直开着。网页（view）经它自己的开发服务器连过来。
   # 只在这台电脑自己（127.0.0.1）上开端口，别的电脑连不进来。这里用到的东西都只读。
@@ -35,3 +37,39 @@ services:
       - ./body:/app:ro
       - ./third_party:/third_party:ro
       - ./contracts:/contracts:ro
+
+  # 训练：用显卡，要的时候才开，用完就退出：
+  #   docker compose run --rm train                     看显卡能不能用
+  #   docker compose run --rm train pytest              测试
+  # 训练的记录和练出来的策略写进 results（不提交）。
+  train:
+    image: nova-train
+    build:
+      context: .
+      dockerfile: train/Dockerfile
+    volumes:
+      - ./train:/train
+      - ./body:/body:ro
+      - ./contracts:/contracts:ro
+      - ./third_party:/third_party:ro
+      - ./results:/results
+      # 显卡的程序（Warp 的内核）第一次用时要编译，编译好的留在这里，下次不用再等。
+      - train-cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # 改了 train/pyproject.toml 以后重新锁版本（写 train/uv.lock）：docker compose run --rm train-lock
+  train-lock:
+    image: python:3.13.18-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+    working_dir: /train
+    command: sh -c "pip install --no-cache-dir --disable-pip-version-check -q --root-user-action=ignore uv==0.13.7 && uv lock"
+    volumes:
+      - ./train:/train
+
+volumes:
+  train-cache:

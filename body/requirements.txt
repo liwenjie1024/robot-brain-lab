@@ -2,3 +2,8 @@ mujoco==3.17.0
 numpy==2.5.4
 aiohttp==3.14.5
 jsonschema==4.26.0
+# 测试台跑练出来的策略（ONNX）。它要的库也写死，版本和 train/uv.lock 里的一样。
+onnxruntime==1.31.1
+flatbuffers==25.12.19
+packaging==26.3
+protobuf==7.36.2

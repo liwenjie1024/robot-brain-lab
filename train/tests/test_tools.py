@@ -1,0 +1,46 @@
+"""训练这边小工具的测试：显卡能用、显卡和 CPU 算的一样；训练时只关掉"解的次数用完了"的提醒；
+测试用的小策略提交进仓库的和现在做出来的一模一样。"""
+
+from pathlib import Path
+
+import mujoco_warp as mjw
+from mjlab.sim.sim import SimulationCfg
+
+from nova_train.fixtures import fixture_files
+from nova_train.gpu import check
+from nova_train.train import EXPECTED_OVERFLOWS, apply_wp_opt_quietly
+
+COMMITTED_FIXTURES = Path("/body/tests/fixtures/policy")
+
+
+def test_the_gpu_is_usable_and_agrees_with_the_cpu():
+    """显卡上的 MuJoCo Warp 和 CPU 的 MuJoCo 算一个方块落地，高度一样。"""
+    report = check()
+    assert report.same_physics
+    assert report.mujoco_version == "3.17.0"
+
+
+def test_training_silences_only_the_expected_overflows():
+    """训练时关掉"解的次数用完了"（迭代、线搜索）的提醒，接触、约束放不下的提醒留着。"""
+    option = SimpleOption(int(mjw.OverflowType.ALL))
+    apply_wp_opt_quietly(SimulationCfg(), option)
+    assert option.warn_overflow & EXPECTED_OVERFLOWS == 0
+    for kept in (mjw.OverflowType.NEFC, mjw.OverflowType.BROADPHASE, mjw.OverflowType.NARROWPHASE):
+        assert option.warn_overflow & int(kept)
+
+
+class SimpleOption:
+    """只有 apply_wp_opt 用到的几项的 Warp 选项。"""
+
+    def __init__(self, warn_overflow: int):
+        self.warn_overflow = warn_overflow
+        self.contact_sensor_maxmatch = 0
+        self.broadphase = None
+        self.broadphase_filter = None
+        self.graph_conditional = None
+
+
+def test_the_committed_fixture_policy_is_what_the_generator_makes():
+    """body/tests/fixtures/policy 里提交的三个文件，和现在做出来的一个字节都不差。"""
+    for name, content in fixture_files().items():
+        assert (COMMITTED_FIXTURES / name).read_bytes() == content, name

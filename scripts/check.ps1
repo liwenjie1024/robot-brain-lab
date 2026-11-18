@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
     提交前的本地检查：外面来的文件（基线的模型）齐不齐，身体和仿真（在容器里）的格式、代码规则、测试，
-    报告和代码是不是对得上，网页的代码规则、类型、测试、打包。
+    报告和代码是不是对得上，训练（在用显卡的容器里）的格式、代码规则、测试，网页的代码规则、类型、测试、打包。
 .EXAMPLE
     .\scripts\check.ps1
 #>
@@ -56,6 +56,10 @@ Invoke-Step '身体：力量的报告和代码对得上' {
 # 驱动器的报告要让 Nova 做一遍全部的动作、算一轮家务的热，一两分钟。
 Invoke-Step '身体：驱动器的报告和代码对得上' {
     docker compose run --rm body sh -c 'python -m nova_body.drive_report --output /tmp/drives.md > /dev/null && cmp /tmp/drives.md /docs/报告/驱动器.md'
+}
+# 训练的容器要用显卡。--build：改了 train 的 pyproject.toml、uv.lock、Dockerfile 就重新做镜像（没改的话很快）。
+Invoke-Step '训练：格式、代码规则、测试（容器，用显卡）' {
+    docker compose run --rm --build train sh -c 'ruff format --check . && ruff check . && pytest -q'
 }
 # 网页在这台电脑上直接跑（不在容器里）。依赖已经装好的话，这一步很快。
 Invoke-Step '网页：依赖装好了' {

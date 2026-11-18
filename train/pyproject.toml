@@ -1,0 +1,71 @@
+# 训练用的环境（nova-train 容器）。版本都写死在 uv.lock 里；改了这里要重新锁：
+#   docker compose run --rm train-lock
+# 规矩：只用发布超过两周的版本（exclude-newer），MuJoCo 和身体用同一个（3.17.0）。
+[project]
+name = "nova-train"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = [
+  # mjlab 2026-11-01 的那一版（提交 dcdf6ce，1.6.0）：还在用 MuJoCo 3.x 的最后一版。
+  "mjlab",
+  # mjlab 直接用的库，按那一版自己测过的版本写死（它的 uv.lock）。
+  "torch==2.14.0",
+  "warp-lang==1.18.0",
+  "rsl-rl-lib==5.5.2",
+  "tensordict==0.14.2",
+  "onnx==1.22.0",
+  "onnxscript==0.5.4",
+  "prettytable==3.16.0",
+  "tqdm==4.67.1",
+  "tyro==1.0.1",
+  "torchrunx==0.3.4",
+  "trimesh==4.8.3",
+  "scipy==1.16.2",
+  "viser==1.1.1",
+  "mjviser==0.0.16",
+  "mediapy==1.2.7",
+  "imageio-ffmpeg==0.6.0",
+  "tensorboard==2.20.0",
+  "wandb==0.30.0",
+  # 和身体的容器一样的版本。
+  "mujoco==3.17.0",
+  "mujoco-warp==3.17.0",
+  "numpy==2.5.4",
+  "jsonschema==4.26.0",
+  "onnxruntime==1.31.1",
+  "pytest==9.2.0",
+  "ruff==0.17.3",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "2026-11-04T00:00:00Z"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# mjlab 那一版写的是 mujoco~=3.16.0。我们用 3.17.0（和身体一样），能不能一起用由 2.0 步实测。
+override-dependencies = ["mujoco==3.17.0", "mujoco-warp==3.17.0"]
+
+[tool.uv.sources]
+mjlab = { url = "https://github.com/mujocolab/mjlab/archive/dcdf6ce519abfd2ea45e9503ae6fb650b75bb869.tar.gz" }
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+# 和身体（body/pyproject.toml）一样的规则。
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "N"]
+# 中文文字里的全角标点（，。：→）不要改成别的字符。
+ignore = ["RUF001", "RUF002", "RUF003", "PLR0913"]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里直接写期望的数，读起来更清楚。
+"tests/**" = ["PLR2004"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

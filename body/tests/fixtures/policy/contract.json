@@ -1,0 +1,101 @@
+{
+  "contract_version": 1,
+  "name": "fixture",
+  "body": {
+    "name": "fixture",
+    "model": "body.xml",
+    "sha256": "5b0440ffc14ca0eb967ec3a5cf05dc43f1e0bc8e64beb72536014ca91ec10ead"
+  },
+  "trained": {
+    "tool": "nova_train.fixtures",
+    "version": "1",
+    "source": "train/nova_train/fixtures.py",
+    "task": "测试用：从观测里挑出两个数",
+    "iterations": 0,
+    "date": "2026-11-18"
+  },
+  "onnx": {
+    "file": "policy.onnx",
+    "sha256": "84a41acc4ac69cbfc4df5f08d8d536b32efcbaec10c934210bec5213d21637ff",
+    "input": "obs",
+    "output": "actions"
+  },
+  "rate_hz": 50.0,
+  "imu_site": "imu",
+  "joints": [
+    {
+      "name": "joint_a",
+      "default_position_rad": 0.1,
+      "action_scale_rad": 0.5,
+      "stiffness_nm_per_rad": 20.0,
+      "damping_nms_per_rad": 1.0,
+      "torque_limit_nm": 5.0
+    },
+    {
+      "name": "joint_b",
+      "default_position_rad": -0.2,
+      "action_scale_rad": 0.25,
+      "stiffness_nm_per_rad": 30.0,
+      "damping_nms_per_rad": 2.0,
+      "torque_limit_nm": 8.0
+    }
+  ],
+  "observations": [
+    {
+      "term": "base_lin_vel",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "base_ang_vel",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "projected_gravity",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "joint_pos",
+      "size": 2,
+      "scale": 1.0
+    },
+    {
+      "term": "joint_vel",
+      "size": 2,
+      "scale": 1.0
+    },
+    {
+      "term": "last_action",
+      "size": 2,
+      "scale": 1.0
+    },
+    {
+      "term": "command",
+      "size": 3,
+      "scale": 1.0
+    }
+  ],
+  "command": {
+    "fields": [
+      "lin_vel_x",
+      "lin_vel_y",
+      "ang_vel_z"
+    ],
+    "ranges": {
+      "lin_vel_x": [
+        -1.0,
+        1.0
+      ],
+      "lin_vel_y": [
+        -1.0,
+        1.0
+      ],
+      "ang_vel_z": [
+        -0.5,
+        0.5
+      ]
+    }
+  }
+}

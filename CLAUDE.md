@@ -44,11 +44,18 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  sensing（身体自己的传感器：噪声、零偏、延迟） packaging（放不放得下：驱动器的大小、骨盆）
                  nova_body，基线: third_party（按清单下载、核对外面来的文件） baseline（把 Unitree G1 放上测试台）
                  baseline_report（基线和 Nova 比的报告）
+                 nova_body，练出来的策略: policy（照规约读进来、核对） policy_runner（接到身体上：观测、动作、软硬）
+                 policy_walk（按命令表考走路的策略）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
                  live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
                  channel（给每个网页发东西的队列）
 contracts/       规约（JSON Schema），只写在这一处：sim/ 里是仿真和网页之间的三种东西：scene（身体的样子）、
                  message（招呼、状态、答复）、command（命令）。仿真（jsonschema）和网页（ajv）用同一份文件检查
+                 policy/ 里是练出来的策略的规约（看什么、出什么）：训练那边写，测试台读
+train/          训练：在显卡上做强化学习（容器 nova-train）。mjlab、MuJoCo Warp、PyTorch，版本锁在 uv.lock
+                 nova_train: gpu（显卡能不能用） train（mjlab 的训练，关掉预料之中的提醒） contract（写策略的规约）
+                 export_policy（导出给测试台） nova_warp（Nova 在显卡上的仿真） fixtures（测试用的小策略）
+results/        训练的记录、练出来的策略、考的结果（不提交）
 view/            网页：Vue 3 + TypeScript + Naive UI + three.js，直接在这台电脑上跑（Node.js，端口 5280）
                  sim/（连接 link、检查 contracts、网格 meshes、画面上的数多久换 display、算出来的 derive、总的 useSim）
                  stage/（3D：figure 搭身体和摆姿势，stage 碰显卡） components/（画面的各块） text/（数和状态的写法）
@@ -73,6 +80,12 @@ docker compose up -d sim                                       # 只启动实时
 npm --prefix view run contracts                                # 改了 contracts/ 里的规约以后，重新生成网页用的类型
 npm --prefix view run fixtures                                 # 改了规约或身体以后，从开着的仿真里重新抓网页测试用的样本
 npm --prefix view run test                                     # 网页的测试（lint、build 也是这样跑）
+docker compose run --rm train                                  # 训练的容器：看显卡能不能用（要显卡）
+docker compose run --rm train pytest                           # 训练这边的测试
+docker compose run --rm train python -m nova_train.train <任务> ... # 训练，参数和 mjlab 的 train 一样（见 train/README.md）
+docker compose run --rm train python -m nova_train.export_policy <任务> <那次训练的目录> --name <名字> --body <身体>  # 交给测试台
+docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json  # 在测试台上考走路
+docker compose run --rm train-lock                             # 改了 train/pyproject.toml 以后重新锁版本
 ```
 
 ## 规则
@@ -90,6 +103,16 @@ npm --prefix view run test                                     # 网页的测试
 - **驱动器和关节不是一一对应的**（1.6 步）：并联的一对（踝、腰、腕）在模型里是两根"固定肌腱"上的两个驱动器，一个是两个关节的和、一个是差。`Body.actuators` 是驱动器的清单（顺序和模型里的驱动器一样，每个写着带哪几个关节、系数），`Body.joints` 是有驱动器带着的关节（峰值是这个关节单独用力时最多出的，并联的是一个驱动器的两倍）。站姿里每个驱动器的力 `stand.holding_torque_nm` 按驱动器排；要按关节看用 `body.joint_holding_torques_nm`。站姿按 MuJoCo 的力臂（`actuator_moment`，3.17 里是稀疏的，用 `mju_sparse2dense`）解，不管驱动器怎么带关节。
 - **仿真每一步都经过驱动器的那一层**（`actuation.step`）：力的上下限每一步按转速和绕组的温度改（`actuator_forcerange`，改了马上生效），热每 10 毫秒算一次，命令晚 1 毫秒到（`DriveLayer.command`）。这一层改模型，所以仿真要用自己的一份模型（`copy.copy`）。没有驱动器模型的身体（基线）只有延迟。
 - **身体各段之间也碰撞**（1.6 步）：外壳的 conaffinity 是 1；父子两段 MuJoCo 自己不算，腕那里本来就挨着的用 exclude 去掉（站姿里它们插着几毫米）。加新的段要看站姿里有没有插到一起（`strength.self_contacts`）。接触传感器也量得到身体自己碰自己（大腿顶着胸），测"碰到地面没有"要看接触的清单，不要只看接触传感器。
+- **训练**（`train/`，为什么这样做）：
+  - 训练的容器用显卡（compose 里的 `deploy.resources`），镜像 10.6 GB，要的时候才开。Warp 第一次用时要编译显卡的程序，编译好的留在 `train-cache` 卷里。
+  - 版本锁在 `train/uv.lock`（uv；`exclude-newer` 只要两周以前发布的）。改了 `train/pyproject.toml` 先 `docker compose run --rm train-lock`，再 `docker compose build train`；镜像用 `uv sync --locked`，锁和 pyproject 对不上就不装。
+  - mjlab 用 2026-11-01 那一版（1.6.0）。它写的是 MuJoCo 3.16，我们用 override 装 3.17（和身体一样）。绕开的四处，都不改 mjlab：`MUJOCO_GL=disable`（容器里没有 EGL）；`GIT_PYTHON_REFRESH=quiet`（没有 git）；训练用 `nova_train.train`，它关掉"解的次数用完了"的提醒（迭代、线搜索；接触、约束放不下的提醒留着）；导出身体时按训练的设置另建一份 Entity（已经接进场景的那一份，3.17 里再复制会崩）。
+  - 在 Git Bash 里给容器传 `/results/...` 这样的路径要加 `MSYS_NO_PATHCONV=1`，不然会变成 Windows 的路径（训练的记录写进过 `train/E:/...`）。PowerShell 里不用。
+  - **只认测试台的分数**：练完用 `export_policy` 导出（ONNX、练的时候的身体模型、规约），在测试台上考（`policy_walk`）。导出时比一比 ONNX 和 PyTorch 的动作，对不上就不交。
+  - 策略的规约只写在 `contracts/policy`：训练那边写，测试台读，两边都照 JSON Schema 检查。规约表达不了的（观测的历史、剪裁、延迟、每一维的缩放）导出时就拒绝；测试台的 `PolicyRunner` 对不上（关节、驱动器、IMU 的点、步长凑不成策略的周期）就拒绝；命令超出练过的范围拒绝，不剪。规约里哪个数的意思变了，`contract_version` 加一。
+  - 身体那边测试用的小策略（`body/tests/fixtures/policy`）是 `nova_train.fixtures` 做的（身体的容器里没有做 ONNX 的库），训练这边的测试核对提交的和做出来的一个字节都不差；改了要重新做、一起提交。
+  - 量显卡上的显存用 Warp 自己记的（`wp.get_mempool_used_mem_current`）：Warp 会留着用过的显存，"显卡还剩多少"量不准（量出过负数）。
+  - mjlab 自带的 G1 和测试台的 G1（Menagerie 的 `g1.xml`）不一样：碰撞的形状、关节的摩擦、转子惯量、软硬都不一样。策略是在哪个身体上练的，规约里写着（`body`），`policy_walk` 用那一个。
 - **身体的传感器读到的不是理想的数**（1.6 步，`sensing.py`）：IMU、六轴力、接触力都加上噪声（按数据手册的噪声密度）、零偏（每一回随机取一次）、延迟（IMU 2 毫秒、六轴力 1 毫秒、接触力 2 毫秒）。实时的仿真每一步读一次，网页上"感觉"那一块给的是它们；测试按传感器的精度比（零偏 + 几倍的噪声），不按理想的数比。测试台自己量的（地面托着多少、压力中心）还是仿真里的真数。
 - **用踝的六轴力算压力中心要扣掉脚自己**（`standing.pressure_center_from_ankle` 的 `FootLoad`）：传感器在脚的上面，脚的重量（和脚加速时要的力）也压在地上，却不经过传感器。不扣差半毫米多，扣了差不到 0.05 mm。脚的加速度像加速度计那样读（站着是朝上的 9.81），真机上用脚的 IMU。
 - **逆运动学一帧一帧解，要防它在一帧里跳**（跳一下就算出几倍的假力矩，1.5 步踩过）：关节的边是软的（离边 5° 开始不划算）；

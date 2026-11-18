@@ -413,6 +413,17 @@ AI 只用在**训练那一端**：
 | RoboCasa、RoboCasa365（MuJoCo 上的家务仿真） | 代码 MIT；素材和数据 CC BY 4.0（要注明出处）；里面来自 Objaverse 的物品可能另有条款 | 可以；Objaverse 的物品**要逐个查** |
 | MuJoCo Menagerie 的 Unitree G1 模型（基线用） | BSD-3（2026-11-15 看过许可证的原文：版权是宇树的，可以改、可以商用，要留着版权声明） | 可以。版本和每个文件的指纹写在 `third_party/unitree_g1.json`，许可证的原文和模型一起下载 |
 | Egocentric-10K（人的第一人称视频） | 据第三方说是 Apache 2.0 | **要确认** |
+| mjlab 1.6.0（训练的框架，2026-11-01 的那一版） | Apache 2.0（仓库的 LICENSE） | 可以 |
+| mjlab 自带的 G1 模型（`asset_zoo/robots/unitree_g1`，2.0 步用它练 G1 走路） | 跟着 mjlab 的仓库（Apache 2.0）；网格是宇树的，MuJoCo Menagerie 里同样的文件是 BSD-3 | 可以，要留着版权声明 |
+| MuJoCo Warp 3.17.0、NVIDIA Warp 1.18.0 | Apache 2.0 | 可以 |
+| PyTorch 2.14.0 | BSD-3 为主；带着的第三方部分有 Apache 2.0、BSD-2、BSL-1.0、MIT（PyPI 上写的） | 可以 |
+| rsl-rl 5.5.2（PPO） | BSD-3 | 可以 |
+| ONNX 1.22.0、onnxscript 0.5.4、ONNX Runtime 1.31.1 | Apache 2.0、MIT、MIT | 可以。ONNX Runtime 以后在机器人上跑策略 |
+| TensorBoard 2.20.0、tyro、trimesh、SciPy、viser、mjviser、mediapy、tensordict、Triton、tqdm、prettytable（训练的容器里的别的库） | Apache 2.0、MIT、BSD、MPL-2.0 | 可以 |
+| NVIDIA 的 CUDA 库（cuBLAS、cuDNN 等，PyTorch 带着的） | NVIDIA 自己的许可（CUDA 的使用许可） | 训练用可以。只在训练的容器里，不随机器人发出去 |
+| torchrunx 0.3.4（mjlab 多张显卡训练时用，我们用不到）、paramiko 5.1.0（它带的） | GPL-3.0、LGPL-2.1 | 只装在训练的容器里，不改、不发出去。**以后要把训练的工具给别人时再看** |
+| imageio-ffmpeg 0.6.0（录视频，现在不用） | 它自己 BSD-2；带着的 ffmpeg 程序是 GPL 或 LGPL | 同上 |
+| wandb 0.30.0（在线的训练记录） | MIT | 可以；关掉了，不往外发 |
 
 选模型和数据时，许可证和能力一起看。新加的东西先填这张表。考场和训练环境的素材也会进训练，一样要能商用（见 [Nova 考试](Nova考试.md) 2.6 节）。其它商用要求见 [商用要求](商用要求.md)。
 
