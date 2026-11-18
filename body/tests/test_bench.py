@@ -101,17 +101,20 @@ def test_stiffness_and_damping_rule():
 
 
 def test_every_drive_follows_the_rule(body):
-    """每个驱动器都是位置控制，软硬按它那个关节的峰值力矩定；目标只能在关节的范围里。"""
+    """每个驱动器都是位置控制，软硬按它的峰值定（偏 0.1 弧度出全力）；目标只能在它的范围里。
+    带一个关节的驱动器，就是那个关节的。"""
     model = body.model
-    assert model.nu == len(body.joints)
-    for index, joint in enumerate(body.joints):
-        stiffness = joint.peak_torque_nm / FULL_TORQUE_ERROR_RAD
-        assert model.actuator(index).name == joint.name
-        assert model.joint(int(model.actuator_trnid[index, 0])).name == joint.name
-        assert model.actuator_gainprm[index, 0] == pytest.approx(stiffness), joint.name
+    assert model.nu == len(body.actuators)
+    for index, actuator in enumerate(body.actuators):
+        stiffness = actuator.peak_torque_nm / FULL_TORQUE_ERROR_RAD
+        assert model.actuator(index).name == actuator.name
+        if len(actuator.joints) == 1:
+            assert model.joint(int(model.actuator_trnid[index, 0])).name == actuator.joints[0][0]
+        assert model.actuator_gainprm[index, 0] == pytest.approx(stiffness), actuator.name
         assert model.actuator_biasprm[index, :3] == pytest.approx([0.0, -stiffness, -stiffness * DAMPING_TIME_S])
-        assert model.actuator_ctrllimited[index], joint.name
-        assert model.actuator_ctrlrange[index] == pytest.approx([joint.lower_rad, joint.upper_rad]), joint.name
+        assert model.actuator_ctrllimited[index], actuator.name
+        assert model.actuator_ctrlrange[index] == pytest.approx([actuator.lower, actuator.upper]), actuator.name
+    for joint in body.joints:
         assert model.joint(joint.name).range == pytest.approx([joint.lower_rad, joint.upper_rad]), joint.name
 
 
@@ -122,17 +125,21 @@ def test_no_joint_gets_more_than_its_peak_torque(body):
     """
     model = body.model
     data = standing_data(model)
-    for index, joint in enumerate(body.joints):
-        address = model.joint(joint.name)
-        angle = data.qpos[address.qposadr[0]]
-        far_end = joint.upper_rad if joint.upper_rad - angle > angle - joint.lower_rad else joint.lower_rad
-        assert abs(far_end - angle) > FULL_TORQUE_ERROR_RAD, joint.name
+    for index, actuator in enumerate(body.actuators):
+        length = data.actuator_length[index]
+        far_end = actuator.upper if actuator.upper - length > length - actuator.lower else actuator.lower
+        assert abs(far_end - length) > FULL_TORQUE_ERROR_RAD, actuator.name
         data.ctrl[:] = body.stand.ctrl
         data.ctrl[index] = far_end
         mujoco.mj_forward(model, data)
-        expected = np.sign(far_end - angle) * joint.peak_torque_nm
-        assert data.qfrc_actuator[address.dofadr[0]] == pytest.approx(expected), joint.name
-        assert read_sensor(model, data, joint.name + TORQUE_SUFFIX)[0] == pytest.approx(expected), joint.name
+        expected = np.sign(far_end - length) * actuator.peak_torque_nm
+        if len(actuator.joints) == 1:
+            name = actuator.joints[0][0]
+            assert data.qfrc_actuator[model.joint(name).dofadr[0]] == pytest.approx(expected), name
+            assert read_sensor(model, data, name + TORQUE_SUFFIX)[0] == pytest.approx(expected), name
+        else:
+            # 带几个关节的驱动器（并联的一对），上限写在驱动器上：它自己的力就是限过的。
+            assert data.actuator_force[index] == pytest.approx(expected), actuator.name
 
 
 # 同样的关节传感器 ------------------------------------------------------------------------------------

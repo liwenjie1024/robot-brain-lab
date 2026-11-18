@@ -9,7 +9,9 @@ import mujoco
 import numpy as np
 import pytest
 
+from nova_body.bench import TIMESTEP_S
 from nova_body.mass_closure import GRAVITY_M_S2
+from nova_body.sensing import ACCELEROMETER, FORCE_STD_N, GYRO, TOUCH_STD_N, per_reading_std
 from nova_sim.live import BROKEN_NUMBERS, MAX_CATCH_UP_S, PUSH_DURATION_S, CommandRejectedError, LiveSim
 from nova_sim.protocol import MESSAGE, problems
 
@@ -153,19 +155,22 @@ def test_joint_readings_are_the_holding_torques(sim, body):
     """站稳以后：每个关节的力矩就是站姿里算好的"顶住重力要的力矩"，速度是 0。"""
     run(sim, 2.0)
     readings = sim.state()["joints"]
-    for joint, torque, expected in zip(body.joints, readings["torques_nm"], body.stand.holding_torque_nm, strict=True):
+    for joint, torque, expected in zip(body.joints, readings["torques_nm"], body.joint_holding_torques_nm, strict=True):
         assert torque == pytest.approx(expected, abs=0.02 * joint.peak_torque_nm), joint.name
     assert np.abs(readings["speeds_rad_s"]).max() < 0.01
 
 
-def test_imus_feel_gravity(sim):
-    """站稳以后：每个 IMU 量到朝上的 9.81，没有在转。"""
+def test_imus_feel_gravity(sim, body):
+    """站稳以后：每个 IMU 量到朝上的 9.81，没有在转。读数是真的传感器读到的：差的不超过零偏加上 5 倍的噪声。"""
     run(sim, 2.0)
     readings = sim.state()["imus"]
-    assert readings
-    for reading in readings:
-        assert reading["acceleration"][Z] == pytest.approx(GRAVITY_M_S2, rel=1e-3)
-        assert reading["angular_velocity"] == pytest.approx([0.0, 0.0, 0.0], abs=1e-3)
+    assert len(readings) == len(body.imus)
+    for imu, reading in zip(body.imus, readings, strict=True):
+        accelerometer, gyro = ACCELEROMETER[imu.grade], GYRO[imu.grade]
+        lean = accelerometer.bias + 5 * per_reading_std(accelerometer.density, TIMESTEP_S)
+        turning = gyro.bias + 5 * per_reading_std(gyro.density, TIMESTEP_S)
+        assert reading["acceleration"][Z] == pytest.approx(GRAVITY_M_S2, abs=lean), imu.label
+        assert reading["angular_velocity"] == pytest.approx([0.0, 0.0, 0.0], abs=turning), imu.label
 
 
 def test_nova_feels_its_feet_and_wrists(nova):
@@ -179,15 +184,15 @@ def test_nova_feels_its_feet_and_wrists(nova):
     hand_kg = float(model.body_subtreemass[model.body("left_hand").id])
     ankle = state["forces"][labels.index("左踝")]["force"]
     wrist = state["forces"][labels.index("右腕")]["force"]
-    assert -ankle[Z] == pytest.approx((nova.body.mass_kg / 2 - foot_kg) * GRAVITY_M_S2, rel=1e-3)
-    assert np.linalg.norm(wrist) == pytest.approx(hand_kg * GRAVITY_M_S2, rel=1e-3)
+    assert -ankle[Z] == pytest.approx((nova.body.mass_kg / 2 - foot_kg) * GRAVITY_M_S2, abs=5 * 2 * FORCE_STD_N)
+    assert np.linalg.norm(wrist) == pytest.approx(hand_kg * GRAVITY_M_S2, abs=5 * FORCE_STD_N * 3)
     touched = {
         sensor.label: force
         for sensor, force in zip(nova.body.touch_sensors, state["touches"], strict=True)
-        if np.linalg.norm(force) > 1e-6
+        if np.linalg.norm(force) > 10 * TOUCH_STD_N
     }
     assert set(touched) == {"左 脚", "右 脚"}
-    assert touched["左 脚"][Z] == pytest.approx(nova.body.mass_kg * GRAVITY_M_S2 / 2, rel=1e-3)
+    assert touched["左 脚"][Z] == pytest.approx(nova.body.mass_kg * GRAVITY_M_S2 / 2, abs=5 * TOUCH_STD_N)
 
 
 def test_nothing_under_the_feet_when_lifted(sim):

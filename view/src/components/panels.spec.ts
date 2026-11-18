@@ -224,7 +224,7 @@ describe('关节的力矩', () => {
     sim.shown.value = changed
     await flushPromises()
     const row = wrapper.findAll('tbody tr').find((candidate) => candidate.text().includes('左 踝 前后'))!
-    expect(row.findAll('td').map((cell) => cell.text())).toEqual(['', '-220.0', '90% 快到顶了'])
+    expect(row.findAll('td').map((cell) => cell.text())).toEqual(['', '-220.0', '87% 快到顶了'])
     expect(wrapper.find('.summary').text()).toContain('快到顶了')
   })
 
@@ -240,16 +240,16 @@ describe('关节的力矩', () => {
 })
 
 describe('感觉', () => {
-  it('Nova：两个 IMU、四个六轴力、碰着地面的两只脚', () => {
+  it('Nova：两个 IMU、四个六轴力、碰着地面的两只脚（读数是身体的传感器读到的，带一点噪声）', () => {
     const wrapper = show(SensePanel, fakeSim(novaScene(), novaState()))
     const text = wrapper.text()
-    expect(text).toContain('前 0.00　左 0.00　上 9.81')
+    expect(text).toMatch(/上 9\.[78]\d/)
     expect(wrapper.findAll('table').length).toBe(2)
     expect(wrapper.findAll('table')[0]!.findAll('tbody tr').length).toBe(2)
     expect(wrapper.findAll('table')[1]!.findAll('tbody tr').length).toBe(4)
     expect(text).toContain('左踝')
-    expect(text).toContain('左 脚 366 N')
-    expect(text).toContain('右 脚 366 N')
+    expect(text).toMatch(/左 脚 36\d N/)
+    expect(text).toMatch(/右 脚 36\d N/)
   })
 
   it('基线：有 IMU；没有的传感器写着"这个身体没有"', () => {

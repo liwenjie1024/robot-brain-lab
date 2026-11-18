@@ -28,6 +28,9 @@ ALIGNMENT_TOLERANCE = 1.0e-6
 # 关节的角度正好在范围的边上时，算的时候会有一点点误差，这么小的不算超出。
 RANGE_TOLERANCE_RAD = 1.0e-9
 
+# 驱动器的力合起来和站姿要的关节力矩差多少还算对得上（N·m）。
+FORCE_TOLERANCE_NM = 1e-6
+
 
 class PostureError(RuntimeError):
     """找不到能站住的姿势。"""
@@ -118,10 +121,10 @@ def deepest_knee_bend_deg(body: Body, step_deg: float = KNEE_SEARCH_STEP_DEG) ->
 
 
 def _can_hold(body: Body, pose: StandPose) -> bool:
-    """这个姿势顶不顶得住：每个驱动器要出的力矩不超过峰值，目标在关节的范围里。"""
+    """这个姿势顶不顶得住：每个驱动器要出的力不超过峰值，目标在它的范围里。"""
     return all(
-        abs(torque) <= joint.peak_torque_nm and joint.lower_rad <= target <= joint.upper_rad
-        for joint, torque, target in zip(body.joints, pose.holding_torque_nm, pose.ctrl, strict=True)
+        abs(force) <= actuator.peak_torque_nm and actuator.lower <= target <= actuator.upper
+        for actuator, force, target in zip(body.actuators, pose.holding_torque_nm, pose.ctrl, strict=True)
     )
 
 
@@ -194,17 +197,15 @@ class _Stance:
     def stand_pose(self, knee_deg: float, toe_up_deg: float) -> StandPose:
         """把现在摆好的姿势写成站姿：位置、每个驱动器要出的力矩、每个驱动器的目标。"""
         model, data = self.model, self.data
-        torques = self._holding_torques()
-        driven = [int(model.actuator_trnid[index, 0]) for index in range(model.nu)]
-        holding = [float(torques[model.jnt_dofadr[joint]]) for joint in driven]
+        forces = _actuator_forces(model, data, self._holding_torques())
         stiffness = model.actuator_gainprm[:, 0]
         return StandPose(
             qpos=tuple(float(value) for value in data.qpos),
             ctrl=tuple(
-                float(data.qpos[model.jnt_qposadr[joint]] + torque / stiffness[index])
-                for index, (joint, torque) in enumerate(zip(driven, holding, strict=True))
+                float(length + force / gain)
+                for length, force, gain in zip(data.actuator_length, forces, stiffness, strict=True)
             ),
-            holding_torque_nm=tuple(holding),
+            holding_torque_nm=tuple(float(force) for force in forces),
             knee_deg=knee_deg,
             ankle_deg=toe_up_deg,
             hip_deg=knee_deg - toe_up_deg,
@@ -278,6 +279,21 @@ class _Stance:
         if not 0.0 < share < 1.0:
             raise PostureError("重心不在两只脚之间，站不住")
         return share, 1.0 - share
+
+
+def _actuator_forces(model: mujoco.MjModel, data: mujoco.MjData, torques: np.ndarray) -> np.ndarray:
+    """每个驱动器要出多大的力，有驱动器带着的关节才得到这些力矩。
+
+    驱动器的力经"力臂"（MuJoCo 算的 actuator_moment）变成关节的力矩：一般的驱动器力臂是 1，
+    并联的一对是和、差。所以不管驱动器怎么带关节，都是解同一个方程。带不出来就报错。
+    """
+    moment = np.zeros((model.nu, model.nv))
+    mujoco.mju_sparse2dense(moment, data.actuator_moment, data.moment_rownnz, data.moment_rowadr, data.moment_colind)
+    driven = np.flatnonzero(np.any(moment != 0.0, axis=0))
+    forces, *_ = np.linalg.lstsq(moment[:, driven].T, torques[driven], rcond=None)
+    if not np.allclose(moment[:, driven].T @ forces, torques[driven], atol=FORCE_TOLERANCE_NM):
+        raise PostureError("驱动器出不了站姿要的力矩（两个驱动器带的是同样的关节）")
+    return forces
 
 
 def _named(lookup: Callable, name: str, kind: str):

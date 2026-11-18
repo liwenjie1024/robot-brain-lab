@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from nova_body.actuation import DriveLayer, step
 from nova_body.bench import FLOOR, STAND_KEY
 from nova_body.body import Anatomy, Body
 from nova_body.mass_closure import GRAVITY_M_S2
@@ -32,6 +33,10 @@ MAX_PELVIS_DROP_M = 0.005
 MAX_FOOT_SLIP_M = 0.001
 MAX_END_SPEED_RAD_S = 0.001
 SUPPORT_FORCE_TOLERANCE = 0.005
+
+# mj_objectAcceleration 给 6 个数：先转动的 3 个，后面线的 3 个。
+SPATIAL_SIZE = 6
+LINEAR = slice(3, 6)
 
 
 @dataclass(frozen=True)
@@ -107,8 +112,10 @@ def simulate_standing(
     """从站姿开始仿真 seconds 秒。controlled 是 False 时驱动器不出力（用来确认是控制让它站住的）。"""
     if seconds <= 0:
         raise ValueError(f"仿真的时间必须大于 0，收到的是 {seconds}")
-    model = body.model if controlled else _without_actuation(body.model)
+    # 驱动器的那一层要改模型里力的上下限，所以用一份自己的模型。
+    model = copy.copy(body.model) if controlled else _without_actuation(body.model)
     data = standing_data(model)
+    drives = drive_layer(body, model)
     root = model.body(body.anatomy.root).id
     pushed = model.body(body.anatomy.trunk).id
     start_height = float(data.xpos[root][UPRIGHT_AXIS])
@@ -118,7 +125,7 @@ def simulate_standing(
     for _ in range(round(seconds / model.opt.timestep)):
         pushing = push is not None and push.is_active(data.time)
         data.xfrc_applied[pushed, :3] = push.force_n if pushing else 0.0
-        mujoco.mj_step(model, data)
+        step(model, data, drives)
         max_tilt_deg = max(max_tilt_deg, tilt_deg(data, root))
         lowest = min(lowest, float(data.xpos[root][UPRIGHT_AXIS]))
         if lowest < FALLEN_HEIGHT_FRACTION * start_height or max_tilt_deg > FALLEN_TILT_DEG:
@@ -140,6 +147,11 @@ def simulate_standing(
         pressure_center_from_heel_m=float(pressure_center[0]) - heel_forward,
         foot_length_m=body.foot_length_m,
     )
+
+
+def drive_layer(body: Body, model: mujoco.MjModel) -> DriveLayer:
+    """这个身体在 model（仿真自己的那一份）上的驱动器：有驱动器模型的照它出力、发热；命令晚 1 毫秒到。"""
+    return DriveLayer(model, [actuator.drive for actuator in body.actuators])
 
 
 def standing_data(model: mujoco.MjModel) -> mujoco.MjData:
@@ -180,16 +192,56 @@ def read_sensor(model: mujoco.MjModel, data: mujoco.MjData, name: str) -> np.nda
     return data.sensordata[start : start + sensor.dim[0]].copy()
 
 
-def pressure_center_from_ankle(force: np.ndarray, moment: np.ndarray, ankle_height_m: float) -> tuple[float, float]:
+@dataclass(frozen=True)
+class FootLoad:
+    """六轴力传感器下面那一截（脚），都在传感器的坐标里：质量、重心离传感器多远、重心的加速度。
+
+    加速度像加速度计那样读（站着不动是朝上的 9.81）：真机上用脚的 IMU 量。地面除了托着传感器上面压下来的，
+    还要托着脚的"有效重量" = -质量 x 这个加速度（站着不动就是脚的重量；脚往上加速时更重）。
+    """
+
+    mass_kg: float
+    center_m: np.ndarray
+    acceleration_m_s2: np.ndarray
+
+    @property
+    def effective_weight_n(self) -> np.ndarray:
+        """脚的有效重量（力，传感器的坐标）。"""
+        return -self.mass_kg * np.asarray(self.acceleration_m_s2, dtype=float)
+
+
+def foot_load(model: mujoco.MjModel, data: mujoco.MjData, sensor_site: str, foot_body: str) -> FootLoad:
+    """仿真里这只脚现在的样子（质量、重心、重心的加速度），换到传感器的坐标里。"""
+    site = model.site(sensor_site).id
+    foot = model.body(foot_body).id
+    to_sensor = data.site_xmat[site].reshape(3, 3).T
+    # 按身体的重心算的加速度（"BODY" 用的是重心那个坐标），带着重力，和加速度计读的一样。
+    spatial = np.zeros(SPATIAL_SIZE)
+    mujoco.mj_objectAcceleration(model, data, mujoco.mjtObj.mjOBJ_BODY, foot, spatial, 0)
+    return FootLoad(
+        mass_kg=float(model.body_subtreemass[foot]),
+        center_m=to_sensor @ (data.subtree_com[foot] - data.site_xpos[site]),
+        acceleration_m_s2=to_sensor @ spatial[LINEAR],
+    )
+
+
+def pressure_center_from_ankle(
+    force: np.ndarray, moment: np.ndarray, ankle_height_m: float, foot: FootLoad | None = None
+) -> tuple[float, float]:
     """用踝部六轴力传感器的读数，算这只脚的压力中心在踝的前面、左边多远。
 
-    传感器读的是小腿给脚的力和力矩（绕踝，脚的坐标）。脚本身很轻，这里不算它的重量。
+    传感器读的是小腿给脚的力和力矩（绕传感器，脚的坐标）。地面托着脚的力 = -传感器的力 - 脚的有效重量；
+    绕传感器的力矩也要平衡，脚的有效重量绕传感器的力矩算进去。给了 foot 就扣掉脚的重量和加速时要的力；
+    不给就当脚没有重量（差 1 毫米左右）。
     """
-    pressing = -force[2]
+    weight = np.zeros(3) if foot is None else foot.effective_weight_n
+    ground = -np.asarray(force, dtype=float) - weight
+    pressing = ground[2]
     if pressing <= 0:
         raise ValueError("这只脚没有踩在地上，没有压力中心")
-    forward = (moment[1] + ankle_height_m * force[0]) / pressing
-    left = (-moment[0] + ankle_height_m * force[1]) / pressing
+    turning = np.zeros(3) if foot is None else np.cross(foot.center_m, weight)
+    forward = (moment[1] - ankle_height_m * ground[0] + turning[1]) / pressing
+    left = -(moment[0] + ankle_height_m * ground[1] + turning[0]) / pressing
     return float(forward), float(left)
 
 

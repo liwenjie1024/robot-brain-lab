@@ -84,12 +84,13 @@ def test_body_stays_at_the_stand_pose(body, settled):
 def test_motors_give_the_holding_torque(body, settled):
     """站着时每个驱动器给关节的力矩，就是站姿里算好的"顶住重力要的力矩"。"""
     torques = [settled.qfrc_actuator[body.model.joint(joint.name).dofadr[0]] for joint in body.joints]
+    holding = body.joint_holding_torques_nm
     for index, joint in enumerate(body.joints):
-        assert torques[index] == pytest.approx(body.stand.holding_torque_nm[index], abs=0.02 * joint.peak_torque_nm)
+        assert torques[index] == pytest.approx(holding[index], abs=0.02 * joint.peak_torque_nm)
     names = [joint.name for joint in body.joints]
     for leg in body.anatomy.legs.values():
         ankle = names.index(leg.ankle_pitch)
-        assert torques[ankle] == pytest.approx(body.stand.holding_torque_nm[ankle], rel=0.02)
+        assert torques[ankle] == pytest.approx(holding[ankle], rel=0.02)
 
 
 def test_standing_is_repeatable(body, stood):

@@ -18,7 +18,7 @@ from nova_body.model import (
     wrist_ft_site,
 )
 from nova_body.skeleton import LINKS, sides_of
-from nova_body.standing import pressure_center_from_ankle, read_sensor, standing_data
+from nova_body.standing import FootLoad, foot_load, pressure_center_from_ankle, read_sensor, standing_data
 
 X, Y, Z = 0, 1, 2
 SETTLE_STEPS = 3000
@@ -45,7 +45,8 @@ def test_ankle_sensors_carry_the_body_above_the_feet(nova, settled):
 
 
 def test_pressure_center_from_ankle_sensor_matches_the_contacts(nova, settled):
-    """用踝部力传感器算出来的压力中心，和直接从脚底的接触点算的差不到 2 mm。"""
+    """用踝部力传感器算出来的压力中心，和直接从脚底的接触点算的：扣掉脚自己的重量，差不到 0.05 mm；
+    不扣，差半毫米多（脚的重量也压在地上，却不经过传感器）。"""
     model = nova.model
     floor = model.geom(FLOOR).id
     for side in Side:
@@ -59,13 +60,27 @@ def test_pressure_center_from_ankle_sensor_matches_the_contacts(nova, settled):
                 total += force[0]
                 weighted += force[0] * contact.pos
         truth = weighted / total - settled.site_xpos[model.site(ankle_ft_site(side)).id]
-        forward, left = pressure_center_from_ankle(
+        reading = (
             read_sensor(model, settled, ankle_ft_site(side) + FORCE_SUFFIX),
             read_sensor(model, settled, ankle_ft_site(side) + MOMENT_SUFFIX),
-            nova.dimensions.ankle_height,
         )
-        assert forward == pytest.approx(truth[X], abs=0.002)
-        assert left == pytest.approx(truth[Y], abs=0.002)
+        load = foot_load(model, settled, ankle_ft_site(side), f"{side.value}_foot")
+        forward, left = pressure_center_from_ankle(*reading, nova.dimensions.ankle_height, load)
+        assert forward == pytest.approx(truth[X], abs=0.00005)
+        assert left == pytest.approx(truth[Y], abs=0.00005)
+        plain, _ = pressure_center_from_ankle(*reading, nova.dimensions.ankle_height)
+        assert 0.0003 < abs(plain - truth[X]) < 0.002
+
+
+def test_a_foot_with_nothing_above_presses_under_its_own_center():
+    """上面什么也没压（传感器读 0），只有脚自己站在地上：压力中心就在脚的重心正下面；
+    脚往上加速时（加速度计读得比 9.81 大）地面托得更多，压力中心还在那里。"""
+    for upward in (9.81, 15.0):
+        foot = FootLoad(
+            mass_kg=0.9, center_m=np.array([0.04, 0.01, -0.03]), acceleration_m_s2=np.array([0.0, 0.0, upward])
+        )
+        forward, left = pressure_center_from_ankle(np.zeros(3), np.zeros(3), 0.066, foot)
+        assert (forward, left) == pytest.approx((0.04, 0.01))
 
 
 def test_pressure_center_needs_a_loaded_foot():

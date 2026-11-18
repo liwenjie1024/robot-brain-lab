@@ -110,7 +110,7 @@ def test_summary_puts_the_two_bodies_side_by_side(report):
     assert summary.count("站住了：最多歪 0.0") == 2
     assert "没有站好" not in summary
     assert "| 往前推，最多扛得住 | 体重的 10%（73 N） | 体重的 6%（20 N） |" in summary
-    assert "| 往侧面推，最多扛得住 | 体重的 8%（59 N） | 体重的 14%（46 N） |" in summary
+    assert "| 往侧面推，最多扛得住 | 体重的 10%（73 N） | 体重的 14%（46 N） |" in summary
     assert "| 躯干竖直时，膝最多能弯到 | 86° | 97° |" in summary
 
 
@@ -130,16 +130,16 @@ def test_source_section_says_where_the_baseline_comes_from(report):
 
 
 def test_pose_section_compares_the_stand_poses(report):
-    """站姿那一节：同样弯 15° 的膝；各自的踝和髋；重心的高度；每个身体最费力的关节都是踝。"""
+    """站姿那一节：同样弯 15° 的膝；各自的踝和髋；重心的高度；每个身体最费力的驱动器都在踝上。"""
     pose = section(report, 3)
     assert "| 膝 | 弯 15.0° | 弯 15.0° |" in pose
     assert "| 踝 | 脚尖向上 11.7° | 脚尖向上 10.6° |" in pose
     assert "| 重心的高度 | 0.944 m（身高的 0.56） | 0.689 m（身高的 0.52） |" in pose
     assert "| 脚底着地的那一段 | 长 25.8 cm | 长 18.0 cm |" in pose
     assert "| 踝最多能让脚尖向上 | 45° | 50° |" in pose
-    assert "| 踝 前后 | 22.4 N·m | 9.1% |" in pose
+    assert "| 踝 前后、侧（并联甲） | 11.2 N·m | 8.9% |" in pose
     assert "| 踝 前后 | 5.6 N·m | 11.2% |" in pose
-    assert pose.count("| 关节 | 出的力矩 | 是峰值的 |") == 2
+    assert pose.count("| 驱动器 | 出的力 | 是峰值的 |") == 2
     hardest = [row for row in table_rows(pose) if row[-1].endswith("%")]
     assert len(hardest) == 2 * 4
     assert not any(row[0].startswith(("左 ", "右 ")) for row in hardest)

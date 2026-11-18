@@ -43,6 +43,15 @@ def angle_of(body, name: str) -> float:
     return body.stand.qpos[body.model.joint(name).qposadr[0]]
 
 
+def holding_by_joint(body) -> dict[str, float]:
+    """站姿里每个有驱动器带着的关节得到的力矩：每个驱动器的力 x 系数，加起来。"""
+    torques = {joint.name: 0.0 for joint in body.joints}
+    for actuator, force in zip(body.actuators, body.stand.holding_torque_nm, strict=True):
+        for name, coefficient in actuator.joints:
+            torques[name] += coefficient * force
+    return torques
+
+
 def other_side(name: str) -> str:
     return name.replace("left_", "right_")
 
@@ -95,30 +104,35 @@ def test_no_joint_rests_on_its_limit(body):
 
 
 def test_targets_carry_the_torque_that_holds_against_gravity(body):
-    """每个驱动器的目标 = 关节的角度 + 顶住重力要的力矩 ÷ 刚度；目标都在关节的范围里。"""
-    for index, joint in enumerate(body.joints):
-        torque = body.stand.holding_torque_nm[index]
-        expected = angle_of(body, joint.name) + torque / stiffness_for(joint.peak_torque_nm)
-        assert body.stand.ctrl[index] == pytest.approx(expected), joint.name
-        assert joint.lower_rad <= body.stand.ctrl[index] <= joint.upper_rad, joint.name
-        assert abs(torque) < joint.peak_torque_nm, joint.name
+    """每个驱动器的目标 = 它带着的关节的角度 x 系数加起来 + 顶住重力要的力 ÷ 刚度；目标都在它的范围里。"""
+    for index, actuator in enumerate(body.actuators):
+        force = body.stand.holding_torque_nm[index]
+        length = sum(coefficient * angle_of(body, name) for name, coefficient in actuator.joints)
+        expected = length + force / stiffness_for(actuator.peak_torque_nm)
+        assert body.stand.ctrl[index] == pytest.approx(expected), actuator.name
+        assert actuator.lower <= body.stand.ctrl[index] <= actuator.upper, actuator.name
+        assert abs(force) < actuator.peak_torque_nm, actuator.name
 
 
 def test_standing_costs_little_torque(body):
-    """站着几乎不费力：每个关节出的力矩都不到它峰值的 15%。"""
-    for joint, torque in zip(body.joints, body.stand.holding_torque_nm, strict=True):
-        assert abs(torque) < 0.15 * joint.peak_torque_nm, joint.name
+    """站着几乎不费力：每个驱动器出的力都不到它峰值的 15%；每个关节得到的力矩也不到它峰值的 15%。"""
+    for actuator, force in zip(body.actuators, body.stand.holding_torque_nm, strict=True):
+        assert abs(force) < 0.15 * actuator.peak_torque_nm, actuator.name
+    holding = holding_by_joint(body)
+    for joint in body.joints:
+        assert abs(holding[joint.name]) < 0.15 * joint.peak_torque_nm, joint.name
 
 
 def test_ankles_work_the_hardest(body):
     """站着时最费力的是踝：重心在脚的中间上面，比踝靠前，要踝顶着。"""
-    hardest = max(zip(body.joints, body.stand.holding_torque_nm, strict=True), key=lambda pair: abs(pair[1]))[0]
-    assert hardest.name in {leg.ankle_pitch for leg in body.anatomy.legs.values()}
+    holding = holding_by_joint(body)
+    hardest = max(holding, key=lambda name: abs(holding[name]))
+    assert hardest in {leg.ankle_pitch for leg in body.anatomy.legs.values()}
 
 
 def test_left_and_right_hold_with_about_the_same_torque(body):
     """左右两侧出的力矩一样大（方向怎么算正，各个身体不一样，所以只比大小）。"""
-    torque_of = dict(zip((joint.name for joint in body.joints), body.stand.holding_torque_nm, strict=True))
+    torque_of = holding_by_joint(body)
     paired = [joint for joint in body.joints if joint.name.startswith("left_")]
     assert paired
     for joint in paired:
@@ -180,6 +194,7 @@ def test_nova_ankles_hold_the_body_over_the_middle_of_the_feet(nova):
     两个踝各出这两个力绕踝的力矩之差，往脚尖向下的方向。"""
     d = nova.dimensions
     names = [joint.name for joint in nova.actuated_joints]
+    holding = nova.body.joint_holding_torques_nm
     lever = d.foot_length / 2 - d.heel_behind_ankle
     model = nova.model
     data = mujoco.MjData(model)
@@ -191,13 +206,15 @@ def test_nova_ankles_hold_the_body_over_the_middle_of_the_feet(nova):
     foot_lever = float(data.subtree_com[foot][0] - data.xanchor[model.joint("left_ankle_pitch").id][0])
     expected = -(nova.budget.total_kg / 2 * lever - foot_kg * foot_lever) * 9.81
     for side in Side:
-        torque = nova.stand.holding_torque_nm[names.index(f"{side.value}_ankle_pitch")]
+        torque = holding[names.index(f"{side.value}_ankle_pitch")]
         assert torque == pytest.approx(expected, rel=0.01)
 
 
 def test_nova_is_the_same_on_both_sides(nova):
     """Nova 是按左右镜像生成的：两侧的角度、出的力矩都一模一样（同一个正方向是同一个动作）。"""
-    torque_of = dict(zip((joint.name for joint in nova.actuated_joints), nova.stand.holding_torque_nm, strict=True))
+    torque_of = dict(
+        zip((joint.name for joint in nova.actuated_joints), nova.body.joint_holding_torques_nm, strict=True)
+    )
     for joint in nova.joints:
         if joint.side is Side.LEFT:
             twin = other_side(joint.name)
@@ -208,7 +225,7 @@ def test_nova_is_the_same_on_both_sides(nova):
 
 def test_nova_stands_with_less_than_a_tenth_of_its_strength(nova):
     """Nova 站着时每个关节出的力矩都不到它峰值的 10%。"""
-    for joint, torque in zip(nova.actuated_joints, nova.stand.holding_torque_nm, strict=True):
+    for joint, torque in zip(nova.actuated_joints, nova.body.joint_holding_torques_nm, strict=True):
         assert abs(torque) < 0.10 * joint.peak_torque_nm, joint.name
 
 
@@ -508,12 +525,13 @@ def test_weak_motors_limit_how_deep_a_body_can_squat(nova):
     """电机太弱、顶不住的时候，能蹲的深度就由力矩定：峰值力矩只有原来的 2% 时，连 1° 都顶不住。"""
     weak = replace(
         nova.body,
-        joints=tuple(replace(joint, peak_torque_nm=0.02 * joint.peak_torque_nm) for joint in nova.body.joints),
+        actuators=tuple(replace(item, peak_torque_nm=0.02 * item.peak_torque_nm) for item in nova.body.actuators),
     )
     with pytest.raises(PostureError, match="膝弯多少都站不住"):
         deepest_knee_bend_deg(weak)
     half = replace(
-        nova.body, joints=tuple(replace(joint, peak_torque_nm=0.5 * joint.peak_torque_nm) for joint in nova.body.joints)
+        nova.body,
+        actuators=tuple(replace(item, peak_torque_nm=0.5 * item.peak_torque_nm) for item in nova.body.actuators),
     )
     assert deepest_knee_bend_deg(half) == deepest_knee_bend_deg(nova.body)
 

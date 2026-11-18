@@ -6,7 +6,8 @@
 - 这个文件：每样东西放在身体里的哪个位置（机体规格第 6 节），各段的形状。
 
 现在是简化的模型，和真机不一样的地方：
-- 膝、踝、腕的连杆和腰椎的推杆没有建，每个关节直接由一个驱动器带动。
+- 膝、踝、腕的连杆和腰椎的推杆没有建。一般的关节直接由一个驱动器带动；并联的一对（踝、腰、腕）由两根
+  "固定肌腱"上的两个驱动器一起带：一个是两个关节的和、一个是差，两个关节的力合起来受两个驱动器的限制。
 - 每个驱动器是"位置 + 阻尼"的控制，代表驱动器里自己跑的阻抗环；刚度和阻尼以后可以在运行时改。
 - 关节的转子惯量、阻尼、干摩擦按选好的驱动器定（drives.py）。并联的一对，两个驱动器都折算到每个关节上。
 - 身体的各段之间不算碰撞，只算和地面的碰撞。
@@ -35,19 +36,22 @@ from nova_body.bench import (
 )
 from nova_body.body import (
     SIDE_NAMES,
+    Actuator,
     Anatomy,
     Body,
     CameraView,
     DrivenJoint,
     ForceSensor,
     Imu,
+    ImuGrade,
     Leg,
     Region,
     Side,
     StandPose,
     TouchSensor,
 )
-from nova_body.design import CORE_BODY, JOINT_GROUPS
+from nova_body.design import CORE_BODY, JOINT_GROUPS, JointGroup
+from nova_body.drives import DriveSpec
 from nova_body.hand import (
     DIGITS,
     PALM_ARCH,
@@ -99,8 +103,13 @@ SEGMENT_REGIONS: dict[Segment, Region] = {
     Segment.SHANK: Region.LEG,
     Segment.FOOT: Region.LEG,
 }
-# IMU 装在哪：模型里那个点的名字，和它在身体的哪里。
-IMU_SITES: dict[str, str] = {PELVIS_IMU: "骨盆", HEAD_IMU: "头"}
+# IMU 装在哪：模型里那个点的名字，它在身体的哪里，是哪一种（骨盆的用高精度的，机体规格第 4 节）。
+IMU_SITES: dict[str, tuple[str, ImuGrade]] = {
+    PELVIS_IMU: ("骨盆", ImuGrade.PRECISE),
+    HEAD_IMU: ("头", ImuGrade.STANDARD),
+}
+# 踝的六轴力要扛住体重，量程大，噪声按腕的两倍。
+ANKLE_FORCE_NOISE_SCALE = 2.0
 
 ACCELERATION_SUFFIX = "_acc"
 GYRO_SUFFIX = "_gyro"
@@ -112,6 +121,11 @@ CONTACT_SUFFIX = "_contact"
 HAND_ARMATURE = 3.0e-4
 HAND_PASSIVE_DAMPING = 5.0e-3
 FOLLOWER_ARMATURE = 5.0e-5
+
+# 并联的一对：两根肌腱，第二个关节的系数一个是 +1（和）、一个是 -1（差）。
+PAIR_SIGNS = (1.0, -1.0)
+PAIR_PARTS = ("a", "b")
+PAIR_LABELS = ("甲", "乙")
 
 SHELL_GROUP = 0
 PART_GROUP = 1
@@ -284,13 +298,18 @@ class NovaModel:
 
     @property
     def actuated_joints(self) -> tuple[ModelJoint, ...]:
-        """有驱动器的关节，顺序和模型里的驱动器一样。"""
+        """有驱动器带着的关节，顺序和模型里的关节一样（驱动器的清单在 body.actuators）。"""
         return tuple(joint for joint in self.joints if joint.peak_torque_nm is not None)
 
 
 def part_legend() -> tuple[tuple[str, tuple[float, float, float, float]], ...]:
     """画图用的图例：每种颜色是什么东西。"""
     return tuple((style.name, style.rgba) for style in PART_STYLES.values())
+
+
+def pair_actuator_name(group_key: str, side: Side | None, part: int) -> str:
+    """并联的一对里第 part 个驱动器（和它的肌腱）在模型里的名字，比如 left_ankle_a。"""
+    return f"{side_prefix(side)}{group_key}_{PAIR_PARTS[part]}"
 
 
 def eye_camera(side: Side) -> str:
@@ -371,6 +390,7 @@ def build_from_budget(
         name=BODY_NAME,
         model=builder.compile(stand),
         anatomy=anatomy,
+        actuators=tuple(builder.actuators),
         joints=tuple(
             DrivenJoint(
                 name=joint.name,
@@ -383,7 +403,10 @@ def build_from_budget(
             for joint in builder.joints
             if joint.peak_torque_nm is not None
         ),
-        imus=tuple(Imu(place, site + ACCELERATION_SUFFIX, site + GYRO_SUFFIX) for site, place in IMU_SITES.items()),
+        imus=tuple(
+            Imu(place, site + ACCELERATION_SUFFIX, site + GYRO_SUFFIX, grade)
+            for site, (place, grade) in IMU_SITES.items()
+        ),
         stand=stand,
         height_m=builder.dims.height,
         foot_length_m=builder.dims.foot_length,
@@ -404,12 +427,19 @@ def build_from_budget(
     )
 
 
+def _pair_range(first: ModelJoint, second: ModelJoint, sign: float) -> tuple[float, float]:
+    """并联的驱动器"长度"（第一个关节 + 系数 x 第二个关节）能到的范围。"""
+    if sign > 0:
+        return first.lower_rad + second.lower_rad, first.upper_rad + second.upper_rad
+    return first.lower_rad - second.upper_rad, first.upper_rad - second.lower_rad
+
+
 def _force_sensors() -> tuple[ForceSensor, ...]:
     """踝和腕的六轴力传感器。"""
-    places = (("踝", ankle_ft_site), ("腕", wrist_ft_site))
+    places = (("踝", ankle_ft_site, ANKLE_FORCE_NOISE_SCALE), ("腕", wrist_ft_site, 1.0))
     return tuple(
-        ForceSensor(SIDE_NAMES[side] + place, site(side) + FORCE_SUFFIX, site(side) + MOMENT_SUFFIX)
-        for place, site in places
+        ForceSensor(SIDE_NAMES[side] + place, site(side) + FORCE_SUFFIX, site(side) + MOMENT_SUFFIX, scale)
+        for place, site, scale in places
         for side in Side
     )
 
@@ -544,7 +574,11 @@ class _Builder:
             group.key: joint_peak_torques_nm(group, assumptions, budget) for group in CORE_BODY.joint_groups()
         }
         self._drives = {group.key: group_drives(group, budget) for group in CORE_BODY.joint_groups()}
-        self._parallel = {group.key: group.parallel for group in JOINT_GROUPS}
+        self._groups = {group.key: group for group in JOINT_GROUPS}
+        self.actuators: list[Actuator] = []
+        # 每个关节用的驱动器（一般的关节）；并联的一对：每一对的两个关节（按自由度排）。
+        self._joint_drive: dict[str, DriveSpec] = {}
+        self._pairs: dict[tuple[str, Side | None], dict[int, ModelJoint]] = {}
         self.spec = mujoco.MjSpec()
         self.spec.modelname = MODEL_NAME
         # MjSpec 的角度默认是度；这里全部用弧度。
@@ -779,7 +813,14 @@ class _Builder:
     # 关节 -------------------------------------------------------------------------------------------
 
     def _add_skeleton_joint(self, body, joint: Joint, side: Side | None, region: Region) -> None:
-        torque = self._torques[joint.group][joint.index]
+        group = self._groups[joint.group]
+        drives = self._drives.get(joint.group)
+        if not drives:
+            raise ModelError(f"{joint.group} 这一组没有选好的驱动器")
+        # 并联的关节单独用力时，两个驱动器一起出；一般的关节就是它的驱动器的峰值。
+        torque = (
+            sum(drive.peak_torque_nm for drive in drives) if group.parallel else self._torques[joint.group][joint.index]
+        )
         lower_deg, upper_deg = self._ranges_deg.get(joint.key, (joint.lower_deg, joint.upper_deg))
         model_joint = ModelJoint(
             name=side_prefix(side) + joint.key,
@@ -792,6 +833,10 @@ class _Builder:
             positive=joint.positive,
             peak_torque_nm=torque,
         )
+        if group.parallel:
+            self._pairs.setdefault((joint.group, side), {})[joint.index] = model_joint
+        else:
+            self._joint_drive[model_joint.name] = drives[joint.index]
         armature, damping, friction = self._drive_loads(joint.group, joint.index)
         self._add_joint(
             body, model_joint, mirror_axis(joint.axis, side), armature=armature, damping=damping, friction=friction
@@ -805,7 +850,7 @@ class _Builder:
         drives = self._drives.get(group_key)
         if not drives:
             raise ModelError(f"{group_key} 这一组没有选好的驱动器")
-        acting = drives if self._parallel[group_key] else (drives[index],)
+        acting = drives if self._groups[group_key].parallel else (drives[index],)
         return (
             sum(drive.armature_kg_m2 for drive in acting),
             sum(drive.viscous_nm_s for drive in acting),
@@ -852,15 +897,16 @@ class _Builder:
         self.joints.append(joint)
 
     def _add_drives(self) -> None:
-        """每个有电机的关节加一个位置驱动器；跟着别的关节动的，加一条联动。"""
+        """每个有电机的关节加一个位置驱动器；并联的一对加两根肌腱、两个驱动器（在这一对的第一个关节那里加）；
+        跟着别的关节动的，加一条联动。驱动器在模型里的顺序就是 actuators 的顺序。
+        """
+        pair_of = {pair[0].name: (key, side, pair[0], pair[1]) for (key, side), pair in self._pairs.items()}
+        paired = {joint.name for pair in self._pairs.values() for joint in pair.values()}
         for joint in self.joints:
-            if joint.peak_torque_nm is not None:
-                actuator = self.spec.add_actuator(name=joint.name, trntype=mujoco.mjtTrn.mjTRN_JOINT, target=joint.name)
-                actuator.set_to_position(kp=joint.stiffness, kv=joint.damping)
-                actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
-                actuator.forcerange = [-joint.peak_torque_nm, joint.peak_torque_nm]
-                actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
-                actuator.ctrlrange = [joint.lower_rad, joint.upper_rad]
+            if joint.name in pair_of:
+                self._add_pair_drives(*pair_of[joint.name])
+            elif joint.peak_torque_nm is not None and joint.name not in paired:
+                self._add_joint_drive(joint)
             elif joint.follows is not None:
                 coupling = self.spec.add_equality(
                     name=f"{joint.name}_follows",
@@ -871,6 +917,60 @@ class _Builder:
                 )
                 # 这个关节的角度 = 0 + 比例 x 被跟着的关节的角度。
                 coupling.data = [0.0, joint.follow_ratio] + [0.0] * (EQUALITY_DATA_SIZE - 2)
+
+    def _add_joint_drive(self, joint: ModelJoint) -> None:
+        """一个关节一个位置驱动器。"""
+        actuator = self.spec.add_actuator(name=joint.name, trntype=mujoco.mjtTrn.mjTRN_JOINT, target=joint.name)
+        actuator.set_to_position(kp=joint.stiffness, kv=joint.damping)
+        actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+        actuator.forcerange = [-joint.peak_torque_nm, joint.peak_torque_nm]
+        actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
+        actuator.ctrlrange = [joint.lower_rad, joint.upper_rad]
+        self.actuators.append(
+            Actuator(
+                name=joint.name,
+                label=joint.label,
+                joints=((joint.name, 1.0),),
+                peak_torque_nm=joint.peak_torque_nm,
+                lower=joint.lower_rad,
+                upper=joint.upper_rad,
+                drive=self._joint_drive.get(joint.name),
+            )
+        )
+
+    def _add_pair_drives(self, key: str, side: Side | None, first: ModelJoint, second: ModelJoint) -> None:
+        """并联的一对：两根固定肌腱（第一个关节 +1，第二个关节 +1 或 -1），每根上一个位置驱动器。
+
+        驱动器的"长度"是两个关节的角度之和（或之差），所以目标的范围由两个关节的范围合起来；
+        关节得到的力矩 = 两个驱动器的力之和（或之差）。刚度按测试台的规则（偏 0.1 弧度出全力），
+        这样关节单独用力时的软硬和一般的关节一样（两个驱动器一起，峰值也是两倍）。
+        """
+        group: JointGroup = self._groups[key]
+        where = "" if side is None else SIDE_NAMES[side] + " "
+        for part, (sign, drive) in enumerate(zip(PAIR_SIGNS, self._drives[key], strict=True)):
+            name = pair_actuator_name(key, side, part)
+            tendon = self.spec.add_tendon(name=name)
+            tendon.wrap_joint(first.name, 1.0)
+            tendon.wrap_joint(second.name, sign)
+            lower, upper = _pair_range(first, second, sign)
+            peak = drive.peak_torque_nm
+            actuator = self.spec.add_actuator(name=name, trntype=mujoco.mjtTrn.mjTRN_TENDON, target=name)
+            actuator.set_to_position(kp=stiffness_for(peak), kv=damping_for(peak))
+            actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+            actuator.forcerange = [-peak, peak]
+            actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE
+            actuator.ctrlrange = [lower, upper]
+            self.actuators.append(
+                Actuator(
+                    name=name,
+                    label=f"{where}{group.name}（并联{PAIR_LABELS[part]}）",
+                    joints=((first.name, 1.0), (second.name, sign)),
+                    peak_torque_nm=peak,
+                    lower=lower,
+                    upper=upper,
+                    drive=drive,
+                )
+            )
 
     # 身体里的东西 -----------------------------------------------------------------------------------
 

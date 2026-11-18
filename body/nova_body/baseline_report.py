@@ -255,28 +255,32 @@ def _pose_section(bodies: tuple[Measured, ...]) -> str:
         "所以踝能转多少，就定了这样能蹲多深。要蹲得再深，得让身体往前倾"
         '（[力量的报告](力量.md)里的"蹲到底再站起"就是这样做的）。',
         "",
-        f"站着时最费力的 {HOLDING_ROWS} 个关节（左右一样的只列左侧）：",
+        f"站着时最费力的 {HOLDING_ROWS} 个驱动器（左右一样的只列左侧；并联的一对是两个驱动器一起带两个关节）：",
     ]
     for measured in bodies:
         lines += [
             "",
             f"**{measured.body.name}**",
             "",
-            *_table(["关节", "出的力矩", "是峰值的"], _holding_rows(measured.body)),
+            *_table(["驱动器", "出的力", "是峰值的"], _holding_rows(measured.body)),
         ]
     return "\n".join(lines)
 
 
 def _holding_rows(body: Body) -> list[list[str]]:
     holding = [
-        (abs(torque), joint)
-        for joint, torque in zip(body.joints, body.stand.holding_torque_nm, strict=True)
-        if not joint.label.startswith(RIGHT_PREFIX)
+        (abs(force), actuator)
+        for actuator, force in zip(body.actuators, body.stand.holding_torque_nm, strict=True)
+        if not actuator.label.startswith(RIGHT_PREFIX)
     ]
     hardest = sorted(holding, key=lambda row: row[0], reverse=True)[:HOLDING_ROWS]
     return [
-        [joint.label.removeprefix(LEFT_PREFIX), f"{torque:.1f} N·m", f"{torque / joint.peak_torque_nm:.1%}"]
-        for torque, joint in hardest
+        [
+            actuator.label.removeprefix(LEFT_PREFIX),
+            f"{force:.1f} N·m",
+            f"{force / actuator.peak_torque_nm:.1%}",
+        ]
+        for force, actuator in hardest
     ]
 
 

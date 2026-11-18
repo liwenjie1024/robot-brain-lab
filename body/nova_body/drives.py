@@ -11,8 +11,11 @@
 """
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
+
+import numpy as np
 
 from nova_body.actuator_mass import ActuatorMassModel
 
@@ -230,6 +233,87 @@ class DriveSpec:
             winding += dt * (loss - to_housing) / network.winding_j_per_k
             housing += dt * (to_housing - to_coolant) / network.housing_j_per_k
         return Temperatures(winding, housing)
+
+
+@dataclass(frozen=True)
+class DriveArrays:
+    """几个驱动器的数排成数组，一起算力的上下限和发热（仿真里每一步、热预算里每一段）。
+
+    规则和 DriveSpec 的一样（测试里两边对着比），只是一次算全部。
+    """
+
+    peak_nm: np.ndarray
+    continuous_nm: np.ndarray
+    knee_speed_rad_s: np.ndarray
+    no_load_speed_rad_s: np.ndarray
+    km_squared: np.ndarray
+    to_housing_k_per_w: np.ndarray
+    to_coolant_k_per_w: np.ndarray
+    winding_j_per_k: np.ndarray
+    housing_j_per_k: np.ndarray
+
+    @classmethod
+    def of(cls, drives: Sequence[DriveSpec]) -> "DriveArrays":
+        """把这几个驱动器的数排成数组。"""
+
+        def column(read) -> np.ndarray:
+            return np.array([read(drive) for drive in drives], dtype=float)
+
+        return cls(
+            peak_nm=column(lambda drive: drive.peak_torque_nm),
+            continuous_nm=column(lambda drive: drive.continuous_torque_nm),
+            knee_speed_rad_s=column(lambda drive: drive.knee_speed_rad_s),
+            no_load_speed_rad_s=column(lambda drive: drive.no_load_speed_rad_s),
+            km_squared=column(lambda drive: drive.km_nm_per_sqrt_w) ** 2,
+            to_housing_k_per_w=column(lambda drive: drive.thermal.winding_to_housing_k_per_w),
+            to_coolant_k_per_w=column(lambda drive: drive.thermal.housing_to_coolant_k_per_w),
+            winding_j_per_k=column(lambda drive: drive.thermal.winding_j_per_k),
+            housing_j_per_k=column(lambda drive: drive.thermal.housing_j_per_k),
+        )
+
+    def thermal_limit_nm(self, winding_c: np.ndarray) -> np.ndarray:
+        """绕组这么热时每个驱动器力的上限（DriveSpec.thermal_limit_nm 一样的规则）。"""
+        share = np.clip((winding_c - DERATE_FROM_C) / (WINDING_MAX_C - DERATE_FROM_C), 0.0, 1.0)
+        derated = self.peak_nm + share * (self.continuous_nm - self.peak_nm)
+        over = np.clip((winding_c - WINDING_MAX_C) / CUTOFF_ABOVE_MAX_K, 0.0, 1.0)
+        return np.where(winding_c <= WINDING_MAX_C, derated, self.continuous_nm * (1.0 - over))
+
+    def speed_limit_nm(self, speed_rad_s: np.ndarray) -> np.ndarray:
+        """往转的方向推时，电压在这个转速（绝对值）下推得出多大的力（DriveSpec.speed_limit_nm 一样的规则）。"""
+        fraction = (self.no_load_speed_rad_s - speed_rad_s) / (self.no_load_speed_rad_s - self.knee_speed_rad_s)
+        return self.peak_nm * np.clip(fraction, 0.0, 1.0)
+
+    def torque_limits_nm(self, speed_rad_s: np.ndarray, winding_c: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """每个驱动器在这个转速、这个温度下能出的力的下限和上限（DriveSpec.torque_limits_nm 一样的规则）。"""
+        return self.limits_with(speed_rad_s, self.thermal_limit_nm(winding_c))
+
+    def limits_with(self, speed_rad_s: np.ndarray, thermal_nm: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """按温度的上限已经算好了（温度变得慢，不用每一步都算），再按转速定下限和上限。"""
+        thermal = thermal_nm
+        pushing = np.minimum(thermal, self.speed_limit_nm(np.abs(speed_rad_s)))
+        upper = np.where(speed_rad_s < 0, thermal, pushing)
+        lower = -np.where(speed_rad_s > 0, thermal, pushing)
+        return lower, upper
+
+    def heat(
+        self, winding_c: np.ndarray, housing_c: np.ndarray, torque_squared: np.ndarray, seconds: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """出着这么大的力（平方）过了 seconds 秒：绕组、身子变成多热，最后一小步每个驱动器发多少热（瓦）。
+
+        按时间切成小段一步一步算（显式积分，每段不超过最快的绕组时间常数的十分之一），和 DriveSpec.heat 一样。
+        """
+        fastest = float(np.min(self.to_housing_k_per_w * self.winding_j_per_k))
+        steps = max(1, math.ceil(seconds / (0.1 * fastest)))
+        dt = seconds / steps
+        winding, housing = winding_c.astype(float), housing_c.astype(float)
+        loss = np.zeros_like(winding)
+        for _ in range(steps):
+            loss = torque_squared / self.km_squared * (1.0 + COPPER_TEMPERATURE_COEFFICIENT * (winding - REFERENCE_C))
+            flow = (winding - housing) / self.to_housing_k_per_w
+            out = (housing - COOLANT_C) / self.to_coolant_k_per_w
+            winding = winding + dt * (loss - flow) / self.winding_j_per_k
+            housing = housing + dt * (flow - out) / self.housing_j_per_k
+        return winding, housing, loss
 
 
 def size_drive(

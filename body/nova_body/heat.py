@@ -18,7 +18,7 @@ import numpy as np
 
 from nova_body.body import SIDE_NAMES, Body, Side
 from nova_body.design import JOINT_GROUPS, JointGroup, TorqueRule
-from nova_body.drives import COOLANT_C, COPPER_TEMPERATURE_COEFFICIENT, DERATE_FROM_C, REFERENCE_C, DriveSpec
+from nova_body.drives import COOLANT_C, DERATE_FROM_C, DriveArrays, DriveSpec
 from nova_body.skeleton import side_prefix
 from nova_body.strength import MotionDemand, MotionSeries, group_members
 
@@ -263,22 +263,10 @@ def run_heat(
     count = len(motors)
     winding = np.full(count, COOLANT_C) if winding_c is None else winding_c.astype(float).copy()
     housing = np.full(count, COOLANT_C) if housing_c is None else housing_c.astype(float).copy()
-    km2 = np.array([motor.drive.km_nm_per_sqrt_w for motor in motors]) ** 2
-    to_housing_r = np.array([motor.drive.thermal.winding_to_housing_k_per_w for motor in motors])
-    to_coolant_r = np.array([motor.drive.thermal.housing_to_coolant_k_per_w for motor in motors])
-    winding_cap = np.array([motor.drive.thermal.winding_j_per_k for motor in motors])
-    housing_cap = np.array([motor.drive.thermal.housing_j_per_k for motor in motors])
-    shortest = float(np.min(to_housing_r * winding_cap))
+    arrays = DriveArrays.of([motor.drive for motor in motors])
     windings, housings, losses = [], [], []
     for squares, seconds in zip(blocks.mean_square_nm2, blocks.seconds, strict=True):
-        steps = max(1, math.ceil(seconds / (0.1 * shortest)))
-        dt = seconds / steps
-        for _ in range(steps):
-            loss = squares / km2 * (1.0 + COPPER_TEMPERATURE_COEFFICIENT * (winding - REFERENCE_C))
-            flow = (winding - housing) / to_housing_r
-            out = (housing - COOLANT_C) / to_coolant_r
-            winding = winding + dt * (loss - flow) / winding_cap
-            housing = housing + dt * (flow - out) / housing_cap
+        winding, housing, loss = arrays.heat(winding, housing, squares, float(seconds))
         windings.append(winding.copy())
         housings.append(housing.copy())
         losses.append(loss)

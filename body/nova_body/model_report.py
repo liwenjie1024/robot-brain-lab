@@ -83,7 +83,7 @@ def _summary_section(nova: NovaModel, standing: StandingResult) -> str:
     model = nova.model
     hand_total = len(hand_joints())
     hand_driven = sum(1 for joint in hand_joints() if joint.peak_torque_nm is not None)
-    body_driven = len(nova.actuated_joints) - len(Side) * hand_driven
+    body_driven = len(nova.body.actuators) - len(Side) * hand_driven
     hands_total = len(Side) * hand_total
     verdict = "站住了" if stood_well(standing) else "**没有站好**"
     rows = [
@@ -92,7 +92,7 @@ def _summary_section(nova: NovaModel, standing: StandingResult) -> str:
         "| 项目 | 结果 |",
         "|---|---|",
         f"| 自由度 | {len(nova.joints)}（两只手 {hands_total}，身体 {len(nova.joints) - hands_total}） |",
-        f"| 驱动器 | {len(nova.actuated_joints)}（身体 {body_driven}，每只手 {hand_driven}；"
+        f"| 驱动器 | {len(nova.body.actuators)}（身体 {body_driven}，每只手 {hand_driven}；"
         f"每只手有 {hand_total - hand_driven} 个远指间跟着近指间动） |",
         f"| 身高 | {nova.dimensions.height:.2f} m |",
         f"| 模型的总质量 | {nova.body.mass_kg:.2f} kg（质量闭环算的是 {nova.budget.total_kg:.2f} kg） |",
@@ -123,18 +123,18 @@ def _pose_section(nova: NovaModel) -> str:
         f"| 重心的高度 | {stand.center_of_mass_height_m:.3f} m（身高的 {ratio:.2f}；人约 0.55~0.57） |",
         "",
         "驱动器的目标里带着顶住重力要的力矩，所以站姿正好是平衡的位置，身体不会往下沉。",
-        f"站着时最费力的 {HOLDING_ROWS} 个关节（左右一样的只列左侧）：",
+        f"站着时最费力的 {HOLDING_ROWS} 个驱动器（左右一样的只列左侧；并联的一对是两个驱动器一起带两个关节）：",
         "",
-        "| 关节 | 出的力矩 | 是峰值的 |",
+        "| 驱动器 | 出的力 | 是峰值的 |",
         "|---|---|---|",
     ]
     holding = [
-        (abs(torque) / joint.peak_torque_nm, joint, torque)
-        for joint, torque in zip(nova.actuated_joints, stand.holding_torque_nm, strict=True)
-        if joint.side is not Side.RIGHT
+        (abs(force) / actuator.peak_torque_nm, actuator, force)
+        for actuator, force in zip(nova.body.actuators, stand.holding_torque_nm, strict=True)
+        if not actuator.label.startswith("右 ")
     ]
-    for share, joint, torque in sorted(holding, key=lambda row: abs(row[2]), reverse=True)[:HOLDING_ROWS]:
-        rows.append(f"| {joint.label.removeprefix('左 ')} | {abs(torque):.1f} N·m | {share:.1%} |")
+    for share, actuator, force in sorted(holding, key=lambda row: abs(row[2]), reverse=True)[:HOLDING_ROWS]:
+        rows.append(f"| {actuator.label.removeprefix('左 ')} | {abs(force):.1f} N·m | {share:.1%} |")
     return "\n".join(rows)
 
 

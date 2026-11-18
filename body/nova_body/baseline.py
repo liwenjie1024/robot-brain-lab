@@ -24,7 +24,7 @@ from nova_body.bench import (
     store_stand_pose,
     use_bench_settings,
 )
-from nova_body.body import SIDE_NAMES, Anatomy, Body, DrivenJoint, Imu, Leg, Region, Side
+from nova_body.body import SIDE_NAMES, Actuator, Anatomy, Body, DrivenJoint, Imu, Leg, Region, Side
 from nova_body.posture import solve_stand_pose
 from nova_body.third_party import MANIFEST_SUFFIX, THIRD_PARTY_DIR, Manifest, load_manifest, require
 
@@ -117,6 +117,17 @@ def put_on_bench(spec: mujoco.MjSpec) -> Body:
     _keep_published_stand(spec)
     joints = _use_bench_drives(spec)
     soles = [_add_sole(spec, side) for side in Side]
+    actuators = tuple(
+        Actuator(
+            name=joint.name,
+            label=joint.label,
+            joints=((joint.name, 1.0),),
+            peak_torque_nm=joint.peak_torque_nm,
+            lower=joint.lower_rad,
+            upper=joint.upper_rad,
+        )
+        for joint in joints
+    )
     names = [joint.name for joint in joints]
     add_joint_sensors(spec, joints=names, driven=names)
 
@@ -131,6 +142,7 @@ def put_on_bench(spec: mujoco.MjSpec) -> Body:
         model=model,
         anatomy=anatomy,
         joints=joints,
+        actuators=actuators,
         imus=IMUS,
         stand=stand,
         height_m=_zero_pose_height(model, anatomy),

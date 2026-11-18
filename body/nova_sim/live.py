@@ -10,11 +10,14 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 
+from nova_body.actuation import step
 from nova_body.body import Body
+from nova_body.sensing import Readings, SensorModel
 from nova_body.standing import (
     FALLEN_HEIGHT_FRACTION,
     FALLEN_TILT_DEG,
     Push,
+    drive_layer,
     floor_support,
     push_of_weight,
     standing_data,
@@ -60,6 +63,10 @@ class LiveSim:
         # 自己用一份模型：松开驱动器是改模型里的开关，不能改到大家共用的那一份。
         self.model = copy.copy(body.model)
         self.data = standing_data(self.model)
+        # 驱动器照它们的样子出力、发热；命令晚 1 毫秒到（改的是上面那一份自己的模型）。
+        self.drives = drive_layer(body, self.model)
+        # 身体自己的传感器：每一步读一次，加上噪声、零偏、延迟。网页上"感觉"那一块给的是它们读到的。
+        self.sensors = SensorModel(self.model, body, seed=episode)
         self._root = self.model.body(body.anatomy.root).id
         self._trunk = self.model.body(body.anatomy.trunk).id
         self._feet = [self.model.body(leg.foot).id for leg in body.anatomy.legs.values()]
@@ -67,9 +74,6 @@ class LiveSim:
         joints = [self.model.joint(joint.name) for joint in body.joints]
         self._joint_angles = np.array([joint.qposadr[0] for joint in joints], dtype=int)
         self._joint_speeds = np.array([joint.dofadr[0] for joint in joints], dtype=int)
-        self._imus = [(self._where(imu.accelerometer), self._where(imu.gyro)) for imu in body.imus]
-        self._forces = [(self._where(sensor.force), self._where(sensor.moment)) for sensor in body.force_sensors]
-        self._touches = [self._where(sensor.sensor) for sensor in body.touch_sensors]
         self._timestep = float(self.model.opt.timestep)
         self.running = True
         self.fallen = False
@@ -150,7 +154,8 @@ class LiveSim:
         self.data.xfrc_applied[self._trunk, :3] = self._push.force_n if pushing else 0.0
         if self._push is not None and not pushing:
             self._push = None
-        mujoco.mj_step(self.model, self.data)
+        step(self.model, self.data, self.drives)
+        self.sensors.sample(self.data)
         if self._numbers_broke():
             self._stop_with_problem(BROKEN_NUMBERS)
             return
@@ -170,6 +175,8 @@ class LiveSim:
         self.problem = problem
 
     def _put_in_stand_pose(self) -> None:
+        self.drives.reset()
+        self.sensors.reset()
         self.data = standing_data(self.model)
         self._push = None
         self._owed_s = 0.0
@@ -183,6 +190,7 @@ class LiveSim:
         # 仿真走完一步以后，传感器和接触还是那一步开始时的；再算一遍才是现在的。
         mujoco.mj_forward(model, data)
         support, center = floor_support(model, data)
+        readings = self._readings()
         return {
             "type": "state",
             "body": self.key,
@@ -201,14 +209,11 @@ class LiveSim:
                 "torques_nm": _rounded(data.qfrc_actuator[self._joint_speeds]),
             },
             "imus": [
-                {"acceleration": _rounded(data.sensordata[acc]), "angular_velocity": _rounded(data.sensordata[gyro])}
-                for acc, gyro in self._imus
+                {"acceleration": _rounded(acceleration), "angular_velocity": _rounded(turning)}
+                for acceleration, turning in readings.imus
             ],
-            "forces": [
-                {"force": _rounded(data.sensordata[force]), "moment": _rounded(data.sensordata[moment])}
-                for force, moment in self._forces
-            ],
-            "touches": [_rounded(data.sensordata[touch]) for touch in self._touches],
+            "forces": [{"force": _rounded(force), "moment": _rounded(moment)} for force, moment in readings.forces],
+            "touches": [_rounded(touch) for touch in readings.touches],
             "feet": [_support(*floor_support(model, data, foot)) for foot in self._feet],
             "support_n": round(float(support), VALUE_DIGITS),
             "pressure_center": _point(support, center),
@@ -218,11 +223,11 @@ class LiveSim:
             "push": self._push_state(),
         }
 
-    def _where(self, sensor_name: str) -> slice:
-        """一个传感器的数在 sensordata 里的哪一段。"""
-        sensor = self.model.sensor(sensor_name)
-        start = int(sensor.adr[0])
-        return slice(start, start + int(sensor.dim[0]))
+    def _readings(self) -> Readings:
+        """身体的传感器现在拿得到的读数。刚开始（还没走过一步）就先读一次。"""
+        if not self.sensors.ready:
+            self.sensors.sample(self.data)
+        return self.sensors.latest()
 
     def _push_state(self) -> dict | None:
         if self._push is None:

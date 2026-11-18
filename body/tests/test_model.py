@@ -11,7 +11,7 @@ from nova_body.actuator_mass import best_today_model, conservative_model
 from nova_body.anthropometry import Segment, segment_count
 from nova_body.bench import FLOOR, POSITION_SUFFIX, STAND_KEY, TIMESTEP_S
 from nova_body.body import Side
-from nova_body.design import CORE_BODY, JOINT_GROUPS
+from nova_body.design import CORE_BODY, JOINT_GROUPS, PARALLEL_TARGETS
 from nova_body.hand import DIGITS, hand_joints
 from nova_body.mass_closure import Assumptions, FixedItem, close_mass
 from nova_body.model import (
@@ -88,12 +88,14 @@ def test_model_has_75_joints_and_67_motors(nova):
 
 
 def test_joint_list_matches_the_model(nova):
-    """模型里除了身体的自由关节，每个关节都在关节的清单里，顺序一样；驱动器的顺序也一样。"""
+    """模型里除了身体的自由关节，每个关节都在关节的清单里，顺序一样；驱动器的清单和模型里的驱动器顺序也一样；
+    交给测试台的"有驱动器带着的关节"就是有峰值力矩的那些。"""
     model = nova.model
     names = [model.joint(index).name for index in range(model.njnt)]
     assert names[0] == ROOT_JOINT
     assert names[1:] == [joint.name for joint in nova.joints]
-    assert [model.actuator(index).name for index in range(model.nu)] == [joint.name for joint in nova.actuated_joints]
+    assert [model.actuator(index).name for index in range(model.nu)] == [item.name for item in nova.body.actuators]
+    assert [joint.name for joint in nova.body.joints] == [joint.name for joint in nova.actuated_joints]
 
 
 def test_building_twice_gives_the_same_model():
@@ -179,15 +181,18 @@ def test_joint_ranges_are_in_the_model(nova):
 
 
 def test_motor_limits_follow_the_mass_closure(nova):
-    """驱动器最多出的力矩是质量闭环给的峰值力矩：膝、踝按体重放大，颈不变，手是估的值。"""
+    """驱动器最多出的力矩是质量闭环给的峰值力矩：膝、踝按体重放大，颈不变，手是估的值。
+    并联的踝：两个驱动器各按动作里同一刻要的，踝前后、踝侧单独用力时两个一起出，是两倍。"""
     model = nova.model
     scale = nova.budget.total_kg / 70.0
     groups = {group.key: group for group in JOINT_GROUPS}
     knee = groups["knee"].daily_torques_nm[0] * scale
-    pitch, roll = (torque * scale for torque in groups["ankle"].daily_torques_nm)
+    motor = PARALLEL_TARGETS["ankle"] * scale
     assert model.actuator("left_knee").forcerange == pytest.approx([-knee, knee])
-    assert model.actuator("right_ankle_pitch").forcerange == pytest.approx([-pitch, pitch])
-    assert model.actuator("right_ankle_roll").forcerange == pytest.approx([-roll, roll])
+    assert model.actuator("right_ankle_a").forcerange == pytest.approx([-motor, motor])
+    assert model.actuator("right_ankle_b").forcerange == pytest.approx([-motor, motor])
+    joints = {joint.name: joint for joint in nova.body.joints}
+    assert joints["right_ankle_pitch"].peak_torque_nm == pytest.approx(2 * motor)
     assert model.actuator("neck_yaw").forcerange == pytest.approx([-20, 20])
     assert model.actuator("left_index_mcp_flex").forcerange == pytest.approx([-2.5, 2.5])
 

@@ -53,10 +53,11 @@ def column(body, name: str) -> int:
 def test_standing_still_needs_the_holding_torques_of_the_stand_pose(body):
     """站着不动：每个关节要的力矩就是站姿里顶住重力的力矩（站姿是另一种算法算的，两边对得上）。"""
     demand = InverseDynamics(body).demand(standing(body), DT)
+    holding = body.joint_holding_torques_nm
     for index, joint in enumerate(body.joints):
         if joint.region.value in {"腿", "腰"}:
             assert demand.torques[STILL_FRAMES // 2, index] == pytest.approx(
-                body.stand.holding_torque_nm[index], abs=0.05 + 0.02 * abs(body.stand.holding_torque_nm[index])
+                holding[index], abs=0.05 + 0.02 * abs(holding[index])
             )
     assert np.abs(demand.speeds).max() == pytest.approx(0.0, abs=1e-12)
 
