@@ -12,13 +12,15 @@ import math
 import os
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache
 
+import mujoco
 import numpy as np
 
 from nova_body.baseline import load_g1
+from nova_body.bench import FLOOR
 from nova_body.body import Body, Region
 from nova_body.design import JOINT_GROUPS, JointGroup, TorqueRule
 from nova_body.inverse import InverseDynamics
@@ -184,6 +186,7 @@ class MotionDemand:
     shared_nm 是并联的每一对关节（按关节的名字）：同一刻两个力矩的绝对值之和的一半，最大是多少。
     edge_margin_m：脚底的压力中心离边最近的时候还有多远；friction_ratio：要的摩擦最大是多少（地面按 0.6 算）。
     series 是每一帧的力矩和转速（做不出来的动作是 None）。
+    self_contacts_m 是动作里身体的哪两段插到了一起、最深插进去多少米（逆运动学还不躲开自己）。
     """
 
     key: str
@@ -202,6 +205,7 @@ class MotionDemand:
     friction_ratio: float
     unbalanced_n: float
     series: MotionSeries | None = None
+    self_contacts_m: dict[tuple[str, str], float] = field(default_factory=dict)
 
 
 def measure_motion(body: Body, builder: MotionBuilder, entry: MotionEntry) -> MotionDemand:
@@ -247,7 +251,26 @@ def measure_motion(body: Body, builder: MotionBuilder, entry: MotionEntry) -> Mo
         friction_ratio=demand.worst_friction_ratio(),
         unbalanced_n=float(demand.unbalanced_n.max()),
         series=MotionSeries(motion.dt, demand.torques, demand.speeds),
+        self_contacts_m=self_contacts(body, [frame.qpos for frame in motion.frames]),
     )
+
+
+def self_contacts(body: Body, poses: Iterable[np.ndarray]) -> dict[tuple[str, str], float]:
+    """这些姿势里，身体的哪两段碰在一起、最深插进去多少米（不算和地面的，按身体的名字排好）。"""
+    model = body.model
+    data = mujoco.MjData(model)
+    floor = model.geom(FLOOR).id
+    deepest: dict[tuple[str, str], float] = {}
+    for qpos in poses:
+        data.qpos[:] = qpos
+        mujoco.mj_forward(model, data)
+        for index in range(data.ncon):
+            contact = data.contact[index]
+            if floor in (int(contact.geom[0]), int(contact.geom[1])):
+                continue
+            pair = tuple(sorted(model.body(model.geom_bodyid[geom]).name for geom in contact.geom[:2]))
+            deepest[pair] = max(deepest.get(pair, 0.0), -float(contact.dist))
+    return {pair: depth for pair, depth in deepest.items() if depth > 0.0}
 
 
 @dataclass(frozen=True)

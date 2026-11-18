@@ -23,6 +23,8 @@ EXTRA_PROBE_KG = 1.0
 HALF = 0.5
 WH_PER_KWH = 1000.0
 HIP_BRAKES_PER_BODY = 2
+# 推杆跨在关节上：一半的重量算在它装的那一段，一半算在另一头。
+SPLIT_SHARE = 0.5
 
 CATEGORY_ACTUATORS = "身体的驱动器"
 CATEGORY_HANDS = "手和手的驱动"
@@ -138,7 +140,7 @@ class ActuatorLine:
     """报告里驱动器的一行：同一组关节里要求一样的驱动器。
 
     torque_nm 是要的峰值力矩；drive 是选好的驱动器（能一直出多大、怎么发热）。
-    按固定重量算的组没有这两样（None）。
+    按固定重量算的组没有这两样（None）。share 是这一段分到每个驱动器重量的几成（推杆跨在关节上时是一半）。
     """
 
     key: str
@@ -149,6 +151,7 @@ class ActuatorLine:
     mass_each_kg: float
     beyond_data: bool
     drive: DriveSpec | None = None
+    share: float = 1.0
 
     @property
     def total_kg(self) -> float:
@@ -323,7 +326,7 @@ def _fixed_items(variant: BodyVariant, assumptions: Assumptions, extra_kg: float
     if assumptions.fallbacks:
         items += [
             FixedItem(
-                "supercapacitor", "超级电容", CATEGORY_FALLBACKS, Segment.PELVIS, 1, assumptions.supercapacitor_kg
+                "supercapacitor", "超级电容", CATEGORY_FALLBACKS, Segment.CHEST, 1, assumptions.supercapacitor_kg
             ),
             FixedItem("safety_board", "安全控制板", CATEGORY_FALLBACKS, Segment.PELVIS, 1, assumptions.safety_board_kg),
             FixedItem(
@@ -383,18 +386,25 @@ def _actuator_lines(group: JointGroup, model: ActuatorMassModel, drives: tuple[D
     counts: dict[DriveSpec, int] = {}
     for drive in drives:
         counts[drive] = counts.get(drive, 0) + group.sides
+    shares = (
+        ((group.segment, 1.0),)
+        if group.split_with is None
+        else ((group.segment, SPLIT_SHARE), (group.split_with, 1.0 - SPLIT_SHARE))
+    )
     return [
         ActuatorLine(
             key=group.key,
             name=group.name,
-            segment=group.segment,
+            segment=segment,
             count=count,
             torque_nm=drive.peak_torque_nm,
-            mass_each_kg=drive.mass_kg,
+            mass_each_kg=drive.mass_kg * share,
             beyond_data=model.is_beyond_data(drive.peak_torque_nm),
             drive=drive,
+            share=share,
         )
         for drive, count in counts.items()
+        for segment, share in shares
     ]
 
 

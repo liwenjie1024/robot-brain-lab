@@ -125,7 +125,8 @@ def test_only_the_feet_feel_contact(nova, settled):
 
 
 def test_fingertip_sensor_feels_a_touch(nova):
-    """把腿收起来、身体放低，让两只手的中指指尖先碰到地面：指尖的力传感器量到往上的力，别的地方没有。"""
+    """把腿收起来、身体放低，让两只手的中指指尖先碰到地面：指尖的力传感器量到往上的力；别的地方都没碰到地面
+    （腿收得这么高，大腿顶着胸：身体各段之间也碰撞，胸的接触传感器量到的是大腿，不是地面）。"""
     model = nova.model
     data = mujoco.MjData(model)
     tucked = {"hip_pitch": 130.0, "knee": 150.0, "ankle_pitch": 20.0}
@@ -143,4 +144,10 @@ def test_fingertip_sensor_feels_a_touch(nova):
         assert read_sensor(model, data, f"{side.value}_hand" + CONTACT_SUFFIX) == pytest.approx(touch)
         assert read_sensor(model, data, tip_force_sensor(side, "thumb")) == pytest.approx(np.zeros(3))
         assert read_sensor(model, data, f"{side.value}_foot" + CONTACT_SUFFIX) == pytest.approx(np.zeros(3))
-    assert read_sensor(model, data, "chest" + CONTACT_SUFFIX) == pytest.approx(np.zeros(3))
+    floor = model.geom(FLOOR).id
+    on_floor = {
+        model.body(model.geom_bodyid[int(contact.geom[1] if contact.geom[0] == floor else contact.geom[0])]).name
+        for contact in data.contact[: data.ncon]
+        if floor in (int(contact.geom[0]), int(contact.geom[1]))
+    }
+    assert on_floor == {f"{side.value}_middle_distal" for side in Side}

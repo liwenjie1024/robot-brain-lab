@@ -10,7 +10,8 @@
   "固定肌腱"上的两个驱动器一起带：一个是两个关节的和、一个是差，两个关节的力合起来受两个驱动器的限制。
 - 每个驱动器是"位置 + 阻尼"的控制，代表驱动器里自己跑的阻抗环；刚度和阻尼以后可以在运行时改。
 - 关节的转子惯量、阻尼、干摩擦按选好的驱动器定（drives.py）。并联的一对，两个驱动器都折算到每个关节上。
-- 身体的各段之间不算碰撞，只算和地面的碰撞。
+- 身体的各段之间也碰撞（外壳和外壳）：MuJoCo 自己不算父子两段；腕那里前臂和手掌的尺骨那一半、拇指的掌骨
+  中间只隔着腕那一段，本来就挨着，也不算。
 
 地面、步长、关节位置控制的软硬是测试台定的（bench.py），对每个身体都一样。
 """
@@ -126,6 +127,9 @@ FOLLOWER_ARMATURE = 5.0e-5
 PAIR_SIGNS = (1.0, -1.0)
 PAIR_PARTS = ("a", "b")
 PAIR_LABELS = ("甲", "乙")
+
+# 拇指最靠近手腕的那一段（腕那里和前臂挨着，不算碰撞）。
+THUMB_BASE = "thumb_metacarpal"
 
 SHELL_GROUP = 0
 PART_GROUP = 1
@@ -511,10 +515,16 @@ def _placements(d: Dimensions) -> dict[tuple[Segment, str], tuple[Vector, ...]]:
             (-0.4 * d.pelvis_half_depth, 0.5 * d.pelvis_half_width, 0.6 * d.pelvis_length),
             (-0.4 * d.pelvis_half_depth, -0.5 * d.pelvis_half_width, 0.6 * d.pelvis_length),
         ),
-        (Segment.PELVIS, "supercapacitor"): ((0.4 * d.pelvis_half_depth, 0.0, 0.35 * d.pelvis_length),),
         (Segment.PELVIS, "safety_board"): ((-0.5 * d.pelvis_half_depth, 0.0, 0.25 * d.pelvis_length),),
-        # 胸和腹：电池在腹部（腰椎的关节上面），电脑在胸前，液冷在背上，肩前后的电机在肩的里侧。
+        # 胸和腹：电池在腹部（腰椎的关节上面），电脑在胸前，液冷在背上，肩前后的电机在肩的里侧；
+        # 腰的推杆上面那一半在腹部的最下面，正对着骨盆里的那一半。
+        (Segment.CHEST, "lumbar_pitch_roll"): (
+            (-0.4 * d.pelvis_half_depth, 0.5 * d.pelvis_half_width, 0.1 * d.chest_length),
+            (-0.4 * d.pelvis_half_depth, -0.5 * d.pelvis_half_width, 0.1 * d.chest_length),
+        ),
         (Segment.CHEST, "battery"): ((0.2 * d.chest_half_depth, 0.0, 0.22 * d.chest_length),),
+        # 超级电容在电池下面（1.6 步从骨盆挪上来：骨盆里放满了，见驱动器的报告）。
+        (Segment.CHEST, "supercapacitor"): ((0.4 * d.chest_half_depth, 0.0, 0.06 * d.chest_length),),
         (Segment.CHEST, "computer"): ((0.3 * d.chest_half_depth, 0.0, 0.66 * d.chest_length),),
         (Segment.CHEST, "cooling"): ((-0.55 * d.chest_half_depth, 0.0, 0.62 * d.chest_length),),
         (Segment.CHEST, "shoulder_pitch"): (
@@ -757,6 +767,10 @@ class _Builder:
         for digit in DIGITS:
             if digit.on_ulnar_palm:
                 self._add_digit(ulnar, PALM_ARCH_PIVOT, digit, side, hand_mass)
+        for neighbour in (ulnar.name, f"{side_prefix(side)}{THUMB_BASE}"):
+            exclude = self.spec.add_exclude()
+            exclude.bodyname1 = forearm.name
+            exclude.bodyname2 = neighbour
         palm.add_site(name=wrist_ft_site(side), pos=[0.0, 0.0, 0.0])
         palm.add_site(name=palm_site(side), pos=self._hand_point(PALM_CENTER, side))
         self._add_camera(
@@ -1024,7 +1038,7 @@ class _Builder:
         self.kinds[name] = kind
 
     def _add_shell(self, body, label: str, mass: float, geom_type, **shape) -> None:
-        """加一块外壳：带着骨架、线、皮肤的质量，会和地面碰撞（碰撞的软硬和摩擦由地面定）。"""
+        """加一块外壳：带着骨架、线、皮肤的质量，会和地面、和身体别的段碰撞（和地面碰的软硬和摩擦由地面定）。"""
         name = f"{body.name}.{label}"
         body.add_geom(
             name=name,
@@ -1032,7 +1046,7 @@ class _Builder:
             mass=mass,
             rgba=list(PART_STYLES[PartKind.SHELL].rgba),
             contype=1,
-            conaffinity=0,
+            conaffinity=1,
             group=SHELL_GROUP,
             **shape,
         )

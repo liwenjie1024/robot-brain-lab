@@ -134,7 +134,7 @@ def test_pose_section_compares_the_stand_poses(report):
     pose = section(report, 3)
     assert "| 膝 | 弯 15.0° | 弯 15.0° |" in pose
     assert "| 踝 | 脚尖向上 11.7° | 脚尖向上 10.6° |" in pose
-    assert "| 重心的高度 | 0.944 m（身高的 0.56） | 0.689 m（身高的 0.52） |" in pose
+    assert "| 重心的高度 | 0.947 m（身高的 0.56） | 0.689 m（身高的 0.52） |" in pose
     assert "| 脚底着地的那一段 | 长 25.8 cm | 长 18.0 cm |" in pose
     assert "| 踝最多能让脚尖向上 | 45° | 50° |" in pose
     assert "| 踝 前后、侧（并联甲） | 11.2 N·m | 8.9% |" in pose

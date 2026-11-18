@@ -172,6 +172,8 @@ def _actuator_note(line: ActuatorLine) -> str:
     notes = []
     if line.drive.sized_by_heat:
         notes.append("按发热选的（要一直出的力大）")
+    if line.share < 1.0:
+        notes.append(f"推杆跨在关节上，这一段算 {line.share:.0%}")
     if line.beyond_data:
         notes.append("峰值超出了样本的范围，是外推的")
     return "；".join(notes)

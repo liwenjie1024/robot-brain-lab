@@ -244,12 +244,13 @@ def test_spread_mass_is_structure_wiring_and_skin():
 
 
 def test_battery_is_above_the_lumbar_joint_and_fallbacks_below():
-    """电池、电脑、液冷在胸和腹；超级电容、安全板、髋的制动器在骨盆；膝的制动器在大腿。"""
+    """电池、电脑、液冷、超级电容在胸和腹（超级电容 1.6 步从骨盆挪上来：骨盆里满了）；安全板、髋的制动器在骨盆；
+    膝的制动器在大腿。"""
     budget = close_core()
-    assert {item_for(budget, key).segment for key in ("battery", "computer", "cooling")} == {Segment.CHEST}
-    assert {item_for(budget, key).segment for key in ("supercapacitor", "safety_board", "hip_brake")} == {
-        Segment.PELVIS
+    assert {item_for(budget, key).segment for key in ("battery", "computer", "cooling", "supercapacitor")} == {
+        Segment.CHEST
     }
+    assert {item_for(budget, key).segment for key in ("safety_board", "hip_brake")} == {Segment.PELVIS}
     assert item_for(budget, "knee_brake").segment == Segment.THIGH
     assert item_for(budget, "battery").mass_each_kg == pytest.approx(5.0)
 
@@ -317,3 +318,15 @@ def test_rejects_impossible_assumptions(changes, message):
     """假设不合理时拒绝。"""
     with pytest.raises(ValueError, match=message):
         replace(BASE, **changes)
+
+
+def test_lumbar_pushers_are_split_between_pelvis_and_chest():
+    """腰的推杆跨在腰的关节上：每个推杆的重量一半算骨盆、一半算胸；加起来还是整个推杆的重量。"""
+    budget = close_core()
+    lines = [line for line in budget.actuators if line.key == "lumbar_pitch_roll"]
+    assert {line.segment for line in lines} == {Segment.PELVIS, Segment.CHEST}
+    assert all(line.share == pytest.approx(0.5) for line in lines)
+    drive = lines[0].drive
+    assert sum(line.total_kg for line in lines) == pytest.approx(2 * drive.mass_kg)
+    others = [line for line in budget.actuators if line.key != "lumbar_pitch_roll"]
+    assert all(line.share == 1.0 for line in others)

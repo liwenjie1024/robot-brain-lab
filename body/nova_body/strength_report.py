@@ -236,8 +236,37 @@ def _motions_section(body: Body, demands: list[MotionDemand]) -> str:
         "",
         "**没有算进来的**：单膝跪地再站起来。后脚离前脚太远，慢慢地（每一刻都站得稳）站不起来，"
         "要借一点冲劲（人也是），留到 P2 用控制器真的做。",
+        "",
+        _self_contact_paragraph(demands),
     ]
     return "\n".join(lines)
+
+
+def _self_contact_paragraph(demands: list[MotionDemand]) -> str:
+    """动作里身体自己插到一起的地方（1.6 步打开了身体各段之间的碰撞）。"""
+    found = []
+    for demand in demands:
+        if not demand.self_contacts_m:
+            continue
+        (first, second), depth = max(demand.self_contacts_m.items(), key=lambda item: item[1])
+        found.append(f"{demand.name}（{_link_label(first)}碰到{_link_label(second)}，最深 {depth * MM_PER_M:.0f} mm）")
+    if not found:
+        return "**身体自己插到一起的地方**：没有。"
+    return (
+        "**身体自己插到一起的地方**（身体各段之间的碰撞是 1.6 步打开的）：逆运动学还不躲开自己，"
+        "这几个动作里有两段插到了一起："
+        + "；".join(found)
+        + "。逆动力学不算这些接触，所以力矩是按插着算的（蹲到底时胸压着大腿，其实还能省一点力）。P2 让动作躲开自己。"
+    )
+
+
+def _link_label(body_name: str) -> str:
+    """模型里一段身体的名字换成中文：左右、哪一段。认不得的（手里的小段）照原样。"""
+    names = {part.key: part.name for part in LINKS}
+    for prefix, side in (("left_", "左"), ("right_", "右")):
+        if body_name.startswith(prefix) and body_name[len(prefix) :] in names:
+            return side + names[body_name[len(prefix) :]]
+    return names.get(body_name, body_name)
 
 
 def _targets_section(targets: list[GroupTarget]) -> str:
@@ -472,8 +501,9 @@ def _limits_section() -> str:
             "- 脚是一块硬的平板（核心版没有脚趾）。脚跟抬起时只有脚掌最前面一条撑着，"
             "压力中心偶尔跑出去一点（第 3 节）。",
             "- 只算了第一次考试的这些动作。拧门把手、转头、拿着东西转手腕没写，那几个关节还用人的峰值。",
-            "- 转速目标是这些动作要的；动作都不快，手臂、腰的转速目标偏小，做快的动作时要再看（1.6 步）。",
-            "- 驱动器只按力矩估重量，转速、发热、降额是 1.6 步的事。",
+            "- 转速目标是这些动作要的；动作都不快，手臂、腰的转速目标偏小。"
+            "1.6 步选驱动器时，峰值力矩至少一直出到 8 rad/s。",
+            "- 这里只算峰值的目标。驱动器还要按发热（一直出力）、转速选，见[驱动器的报告](驱动器.md)。",
         ]
     )
 

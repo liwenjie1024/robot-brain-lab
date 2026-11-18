@@ -46,8 +46,9 @@ from nova_body.heat import (
     motors_of,
 )
 from nova_body.mass_closure import Assumptions, MassBudget, close_mass
-from nova_body.model import NovaModel, build_nova
+from nova_body.model import PART_STYLES, NovaModel, PartKind, build_nova
 from nova_body.motions import Level
+from nova_body.packaging import DIAMETER_FIT, LENGTH_FIT, USABLE_SHARE, pelvis_fit
 from nova_body.strength import NOVA, REFERENCE_BODY_MASS_KG, MotionDemand, run_tasks, tasks_for
 
 DEFAULT_OUTPUT = Path("/docs/报告/驱动器.md")
@@ -69,6 +70,10 @@ SIDE_PREFIXES = ("左 ", "右 ")
 # 肩前后和肘改成了液冷。比一比：同样的驱动器不液冷的话，端着箱子站着会怎样。
 ARM_GROUPS_COOLED = ("shoulder_pitch", "elbow")
 PERCENT = 100.0
+MM_PER_M = 1000.0
+LITRES_PER_M3 = 1000.0
+# 放东西的余地不到这么多，就当是满了。
+ROOM_MARGIN = 0.02
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,7 @@ def build_report() -> str:
         _targets_section(targets),
         _power_section(results),
         _closure_section(),
+        _pelvis_section(results.nova),
         _limits_section(),
     ]
     return "\n\n".join(sections) + "\n"
@@ -145,6 +151,7 @@ def _summary_section(results: _Results) -> str:
     liquid, enclosed = _loss_by_cooling(results.round_heat)
     holds_ok = all(item.derate_after_s is None for hold in results.holds for item in hold.motors)
     currents = _phase_currents(budget)
+    pelvis = pelvis_fit(budget, results.nova.dimensions)
     lines = [
         "## 1. 结论",
         "",
@@ -171,6 +178,9 @@ def _summary_section(results: _Results) -> str:
             f"{volts:.0f} V 约 {current:.0f} A" for volts, current in zip(BUS_VOLTAGES_V, currents[0][1], strict=True)
         )
         + "（腿和腰是双绕组，每套绕组一个驱动板，各出一半的电流；第 7 节）。",
+        f"- **骨盆里放得下吗**：按驱动器的大小粗算，骨盆里的东西占 {_percent(pelvis.share)}"
+        f"（能用的按 {_percent(USABLE_SHARE)} 算），{'放得下' if pelvis.fits else '放不下'}；"
+        "超级电容挪到了腹部（第 9 节）。",
     ]
     return "\n".join(lines)
 
@@ -469,10 +479,51 @@ def _closure_section() -> str:
     )
 
 
+def _pelvis_section(nova: NovaModel) -> str:
+    fit = pelvis_fit(nova.budget, nova.dimensions)
+    rows = [
+        [
+            content.name,
+            f"{content.count}",
+            "-" if content.diameter_m is None else f"{content.diameter_m * MM_PER_M:.0f}",
+            f"{content.volume_m3 * LITRES_PER_M3:.2f}",
+        ]
+        for content in fit.contents
+    ]
+    depth, width, height = (side * MM_PER_M for side in fit.box_m)
+    verdict = "**放得下**" if fit.fits else "**放不下**"
+    supercapacitor = Assumptions().supercapacitor_kg / PART_STYLES[PartKind.FALLBACK].density
+    with_supercapacitor = (fit.used_m3 + supercapacitor) / fit.box_volume_m3
+    return "\n".join(
+        [
+            "## 9. 骨盆里放得下吗",
+            "",
+            "按驱动器的重量估它有多大（RobStride 的五个关节电机拟合：直径 ∝ 重量^"
+            f"{DIAMETER_FIT[1]:.2f}、长度 ∝ 重量^{LENGTH_FIT[1]:.2f}），电机当圆柱；别的东西按密度算体积。"
+            "腰的推杆跨在腰的关节上，一半算在胸里。粗算，不排位置。",
+            "",
+            *_table(["骨盆里的", "几个", "直径（mm）", "一共（升）"], rows),
+            "",
+            f"骨盆约 {depth:.0f} x {width:.0f} x {height:.0f} mm（前后、左右、上下），"
+            f"{fit.box_volume_m3 * LITRES_PER_M3:.1f} 升；里面的东西 {fit.used_m3 * LITRES_PER_M3:.1f} 升，"
+            f"占 {_percent(fit.share)}。圆柱之间、线、冷却液的管、骨架要留空，按能用 {_percent(USABLE_SHARE)} 算；"
+            f"最粗的电机 {fit.widest_m * MM_PER_M:.0f} mm，"
+            f"骨盆最窄的那一边 {min(fit.box_m) * MM_PER_M:.0f} mm。{verdict}。"
+            f"超级电容原来也在骨盆里，那样要占 {with_supercapacitor:.1%}（能用的按 {_percent(USABLE_SHARE)} 算），"
+            f"{_room_left(USABLE_SHARE - with_supercapacitor)}，所以挪到了腹部（电池下面）。真的排位置要等结构设计。",
+        ]
+    )
+
+
+def _room_left(margin: float) -> str:
+    """还剩多少余地，说成一句话（不到 2% 就算没有余地）。"""
+    return "一点余地都没有" if margin < ROOM_MARGIN else f"只剩 {_percent(margin)} 的余地"
+
+
 def _limits_section() -> str:
     return "\n".join(
         [
-            "## 9. 还没算的",
+            "## 10. 还没算的",
             "",
             "- 手里的 36 个小电机：手的重量按估的定，热也没算（拿的都是轻东西）。",
             "- 驱动板、电池、线上的损耗：只算了电机的铜损。电机转起来的铁损算在摩擦里。",

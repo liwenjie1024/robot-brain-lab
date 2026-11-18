@@ -55,6 +55,7 @@ class JointGroup:
     （两个方向的力臂按一样长算）。shared_torque_nm 是动作里同一刻每个驱动器最多要的（见 PARALLEL_TARGETS）。
     continuous_torques_nm 是每个驱动器在一轮家务里要一直出的（1.6 步的热预算，见 CONTINUOUS_TARGETS）。
     cooling 是驱动器怎么冷却（机体规格第 12 节）。
+    split_with：推杆跨在关节上，一半的重量算在 segment，另一半算在这一段（没有就是全在 segment）。
     fixed_mass_kg 用在不按力矩算重量的组（微型、被动、力还没测的）：是这一组一侧的总重。
     """
 
@@ -76,6 +77,7 @@ class JointGroup:
     cooling: Cooling = Cooling.ENCLOSED
     shared_torque_nm: float | None = None
     continuous_torques_nm: tuple[float, ...] = ()
+    split_with: Segment | None = None
 
     def __post_init__(self) -> None:
         if self.fixed_mass_kg is None and len(self.peak_torques_nm) != self.dof:
@@ -168,6 +170,8 @@ _SPEC_GROUPS: tuple[JointGroup, ...] = (
         parallel=True,
         dual_winding=True,
         cooling=Cooling.LIQUID,
+        # 推杆一头在骨盆、一头在胸上（外部检查指出的）。
+        split_with=Segment.CHEST,
     ),
     JointGroup(
         "lumbar_yaw",
