@@ -134,7 +134,7 @@ ReflexStep reflex_step(Reflexes& reflexes, const Eigen::VectorXd& position_rad, 
                        const Eigen::VectorXd& stiffness, const Eigen::VectorXd& damping, const Eigen::VectorXd& torque_nm,
                        const Eigen::VectorXd& joint_position, double tilt_rad,
                        const Eigen::VectorXd& actuator_temperature_c, const std::vector<bool>& joint_contact, int stop,
-                       double dt) {
+                       double dt, bool fall_armed) {
   if (stop < -1 || stop > 2) throw std::invalid_argument("停止的类别要是 -1（不停）、0、1、2");
   const nova::rt::JointCommand command{position_rad, velocity_rad_s, stiffness, damping, torque_nm};
   nova::rt::ReflexInput input;
@@ -142,6 +142,7 @@ ReflexStep reflex_step(Reflexes& reflexes, const Eigen::VectorXd& position_rad, 
   input.actuator_temperature_c = actuator_temperature_c;
   input.joint_contact = joint_contact;
   input.stop = static_cast<nova::rt::StopCategory>(stop);
+  input.fall_armed = fall_armed;
   const auto& output = reflexes.step(command, joint_position, input, dt);
   ReflexStep result{output.command.position_rad, output.command.velocity_rad_s, output.command.stiffness_nm_per_rad,
                     output.command.damping_nms_per_rad, output.command.torque_nm, output.actuator_force_scale,
@@ -307,11 +308,12 @@ NB_MODULE(_core, module) {
           },
           "joint_count"_a, "actuator_joints"_a, "brake_damping"_a, "warn_temperature_c"_a = 90.0,
           "hot_temperature_c"_a = 110.0, "hot_force_share"_a = 0.5, "collision_stiffness_share"_a = 0.2,
-          "collision_hold_s"_a = 0.5, "collision_recovery_s"_a = 0.5, "fall_tilt_rad"_a = 0.70,
-          "fall_warning_tilt_rad"_a = 0.44, "fall_tilt_rate_rad_s"_a = 1.5, "fall_stiffness_share"_a = 0.3,
+          "collision_hold_s"_a = 0.5, "collision_recovery_s"_a = 0.5, "fall_tilt_rad"_a = 0.87,
+          "fall_warning_tilt_rad"_a = 0.61, "fall_tilt_rate_rad_s"_a = 3.0, "fall_stiffness_share"_a = 0.3,
           "tilt_rate_filter_s"_a = 0.02)
       .def("step", &reflex_step, "position_rad"_a, "velocity_rad_s"_a, "stiffness"_a, "damping"_a, "torque_nm"_a,
-           "joint_position"_a, "tilt_rad"_a, "actuator_temperature_c"_a, "joint_contact"_a, "stop"_a, "dt"_a)
+           "joint_position"_a, "tilt_rad"_a, "actuator_temperature_c"_a, "joint_contact"_a, "stop"_a, "dt"_a,
+           "fall_armed"_a = true)
       .def("reset", &Reflexes::reset)
       .def_prop_ro("mode", [](const Reflexes& reflexes) { return static_cast<int>(reflexes.mode()); });
 }

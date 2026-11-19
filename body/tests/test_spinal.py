@@ -145,20 +145,24 @@ def test_a_hot_knee_drive_is_derated(nova):
 
 
 def test_a_fall_is_caught_before_the_ground(nova):
-    """被推得救不回来（体重的 40%，0.3 秒）：真的歪到 50° 以前就发现在倒，之后全身的刚度降到 30%。"""
+    """被推得救不回来（体重的 40%，0.3 秒）：真的歪到 55° 以前、骨盆低到一半的 0.05 秒以前就发现在倒，
+    之后全身的刚度降到 30%。"""
     standing = Standing(nova)
     weight = mujoco.mj_getTotalmass(standing.model) * 9.81
+    start_height = standing.pelvis_height
     calm = standing.step()
-    caught_at_deg = None
+    caught_at_deg, caught_at_s, after = None, None, None
     for step in range(3000):
         push = 0.40 * weight if 200 <= step < 500 else 0.0
         result = standing.step(push_n=push)
-        if result.mode == nova_rt.MODE_FALLING:
-            caught_at_deg = tilt_deg(standing.data, standing.root)
+        if caught_at_s is None and result.mode == nova_rt.MODE_FALLING:
+            caught_at_deg, caught_at_s = tilt_deg(standing.data, standing.root), float(standing.data.time)
+            after = standing.step()
+        if standing.pelvis_height < 0.5 * start_height:
             break
-    assert caught_at_deg is not None
-    assert caught_at_deg < 50.0
-    after = standing.step()
+    assert caught_at_s is not None
+    assert caught_at_deg < 55.0
+    assert float(standing.data.time) - caught_at_s > 0.05
     assert after.mode == nova_rt.MODE_FALLING
     assert np.all(after.impedance.stiffness <= 0.3 * calm.impedance.stiffness + 1e-9)
 

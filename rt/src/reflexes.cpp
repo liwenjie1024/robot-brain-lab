@@ -96,7 +96,7 @@ const ReflexOutput& Reflexes::step(const JointCommand& command, const Eigen::Vec
   output_.flags.assign(output_.flags.size(), 0);
   const bool was_falling = falling_;
   const int before = severity(latched_stop_);
-  update_fall(input.tilt_rad, dt);
+  update_fall(input.tilt_rad, input.fall_armed, dt);
   if (severity(input.stop) > before) latched_stop_ = input.stop;
   if ((falling_ && !was_falling) || severity(latched_stop_) > before) latch(joint_position);
   protect(input);
@@ -121,7 +121,7 @@ void Reflexes::check(const JointCommand& command, const Eigen::VectorXd& joint_p
   if (!(dt > 0.0) || !std::isfinite(dt)) fail("时间要是正数");
 }
 
-void Reflexes::update_fall(double tilt_rad, double dt) {
+void Reflexes::update_fall(double tilt_rad, bool armed, double dt) {
   if (has_tilt_) {
     const double raw = (tilt_rad - last_tilt_rad_) / dt;
     const double alpha = dt / (config_.tilt_rate_filter_s + dt);
@@ -129,7 +129,7 @@ void Reflexes::update_fall(double tilt_rad, double dt) {
   }
   has_tilt_ = true;
   last_tilt_rad_ = tilt_rad;
-  if (!falling_) {
+  if (armed && !falling_) {
     falling_ = tilt_rad > config_.fall_tilt_rad ||
                (tilt_rad > config_.fall_warning_tilt_rad && output_.tilt_rate_rad_s > config_.fall_tilt_rate_rad_s);
   }

@@ -99,11 +99,11 @@ TEST(Reflexes, ATouchDuringRecoveryStartsOver) {
   EXPECT_DOUBLE_EQ(output.command.stiffness_nm_per_rad(0), 20.0);
 }
 
-// 说明：歪过 40°：救不回来了。全身变软（30%），顶住开始倒的那一刻的姿势；之后站直了也一直是"在摔倒"，直到重新开始。
+// 说明：歪过 50°：救不回来了。全身变软（30%），顶住开始倒的那一刻的姿势；之后站直了也一直是"在摔倒"，直到重新开始。
 TEST(Reflexes, ABigTiltMeansFallingUntilReset) {
   Reflexes reflexes(config());
   auto tilted = quiet();
-  tilted.tilt_rad = 0.75;
+  tilted.tilt_rad = 0.9;
   auto output = reflexes.step(command(), kPosition, tilted, kStep);
   EXPECT_EQ(output.mode, ReflexMode::kFalling);
   EXPECT_EQ(output.command.position_rad, kPosition);
@@ -117,23 +117,41 @@ TEST(Reflexes, ABigTiltMeansFallingUntilReset) {
   EXPECT_EQ(output.mode, ReflexMode::kNormal);
 }
 
-// 说明：歪过 25° 又在快速地往下倒（每秒 2 弧度）也算摔倒；慢慢歪到 34°（每秒 0.5 弧度）不算。
+// 说明：歪过 35° 又在快速地往下倒（每秒 4 弧度）也算摔倒；歪到 46° 但倒得没那么快（每秒 2.5 弧度，
+// G1 被推了还救得回来时那样）不算，慢慢歪到 46°（每秒 0.5 弧度）也不算。
 TEST(Reflexes, FastTippingPastTheWarningIsAFall) {
-  Reflexes fast(config());
-  Reflexes slow(config());
-  auto input = quiet();
-  ReflexMode fast_mode = ReflexMode::kNormal;
-  for (int step = 0; step <= 250; ++step) {
-    input.tilt_rad = 0.002 * step;  // 每秒 2 弧度，到 0.5
-    fast_mode = fast.step(command(), kPosition, input, kStep).mode;
+  const auto final_mode = [](double rate_rad_s, double until_rad) {
+    Reflexes reflexes(config());
+    auto input = quiet();
+    ReflexMode mode = ReflexMode::kNormal;
+    const int steps = static_cast<int>(std::lround(until_rad / (rate_rad_s * kStep)));
+    for (int step = 0; step <= steps; ++step) {
+      input.tilt_rad = rate_rad_s * kStep * step;
+      mode = reflexes.step(command(), kPosition, input, kStep).mode;
+    }
+    return mode;
+  };
+  EXPECT_EQ(final_mode(4.0, 0.7), ReflexMode::kFalling);
+  EXPECT_EQ(final_mode(2.5, 0.8), ReflexMode::kNormal);
+  EXPECT_EQ(final_mode(0.5, 0.8), ReflexMode::kNormal);
+}
+
+// 说明：小脑层在做起来的动作时把跌倒的反射关掉：躺着（歪 90°）也不算在摔倒；再打开，还歪着就算。
+// 关掉不清掉已经在摔倒的：要重新开始。
+TEST(Reflexes, ADisarmedFallReflexLetsTheBodyGetUpFromLying) {
+  Reflexes reflexes(config());
+  auto lying = quiet();
+  lying.tilt_rad = 1.57;
+  lying.fall_armed = false;
+  for (int step = 0; step < 100; ++step) {
+    EXPECT_EQ(reflexes.step(command(), kPosition, lying, kStep).mode, ReflexMode::kNormal);
   }
-  EXPECT_EQ(fast_mode, ReflexMode::kFalling);
-  ReflexMode slow_mode = ReflexMode::kNormal;
-  for (int step = 0; step <= 1200; ++step) {
-    input.tilt_rad = 0.0005 * step;  // 每秒 0.5 弧度，到 0.6
-    slow_mode = slow.step(command(), kPosition, input, kStep).mode;
-  }
-  EXPECT_EQ(slow_mode, ReflexMode::kNormal);
+  lying.fall_armed = true;
+  EXPECT_EQ(reflexes.step(command(), kPosition, lying, kStep).mode, ReflexMode::kFalling);
+  lying.fall_armed = false;
+  EXPECT_EQ(reflexes.step(command(), kPosition, lying, kStep).mode, ReflexMode::kFalling);
+  reflexes.reset();
+  EXPECT_EQ(reflexes.step(command(), kPosition, lying, kStep).mode, ReflexMode::kNormal);
 }
 
 // 说明：0 类停止：不出力、不顶着，只剩刹车的阻尼；之后不再要停也一直断着，盖过摔倒；直到重新开始。

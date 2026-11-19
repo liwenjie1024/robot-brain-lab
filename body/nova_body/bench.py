@@ -5,6 +5,7 @@
 """
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 import mujoco
 
@@ -20,6 +21,10 @@ CONTACT_SOLREF = (0.005, 1.0)
 # 现成的模型会给自己的脚设优先级（G1 是 1）；不这样做，同一块地面对不同的身体就不一样了。
 FLOOR_PRIORITY = 10
 FLOOR_RGBA = (0.90, 0.90, 0.88, 1.0)
+STAIR_RGBA = (0.78, 0.72, 0.62, 1.0)
+SLIPPERY_RGBA = (0.55, 0.70, 0.85, 1.0)
+# 滑的那一级的摩擦（湿的瓷砖大约 0.3）；后两个（转动、滚动的摩擦）用 MuJoCo 默认的。别的地方都是默认的 1。
+SLIPPERY_FRICTION = (0.3, 0.005, 0.0001)
 
 # 关节的位置控制：偏了这么多弧度，驱动器就出全力；阻尼 = 刚度 x 这个时间。
 FULL_TORQUE_ERROR_RAD = 0.1
@@ -49,6 +54,77 @@ def add_floor(spec: mujoco.MjSpec) -> None:
         solref=list(CONTACT_SOLREF),
         rgba=list(FLOOR_RGBA),
     )
+
+
+@dataclass(frozen=True)
+class Stairs:
+    """一段楼梯：从 start_x 往 +x 上 steps 级（每级高 rise_m、踏面 tread_m），上面一个平台（landing_m），
+    再下 steps 级。宽 width_m，在 y = 0 两边各一半。slippery_levels 里的那几级是滑的（上的和下的都是）。"""
+
+    start_x: float
+    rise_m: float
+    tread_m: float
+    steps: int
+    landing_m: float
+    width_m: float
+    slippery_levels: frozenset[int] = frozenset()
+
+    @property
+    def top_start_x(self) -> float:
+        return self.start_x + self.steps * self.tread_m
+
+    @property
+    def top_end_x(self) -> float:
+        return self.top_start_x + self.landing_m
+
+    @property
+    def end_x(self) -> float:
+        """下去的最后一级的尽头，再往前是地面。"""
+        return self.top_end_x + (self.steps - 1) * self.tread_m
+
+    def step_at(self, x: float) -> int:
+        """这一点踩在第几级上（地面是 0，平台是 steps）。"""
+        if x < self.start_x or x >= self.end_x:
+            return 0
+        if x < self.top_start_x:
+            return int((x - self.start_x) // self.tread_m) + 1
+        if x < self.top_end_x:
+            return self.steps
+        return self.steps - int((x - self.top_end_x) // self.tread_m) - 1
+
+    def height_at(self, x: float) -> float:
+        """这一点的地面有多高（m）。"""
+        return self.step_at(x) * self.rise_m
+
+    def boxes(self) -> list[tuple[float, float, int]]:
+        """楼梯的每一块：从哪到哪（x）、第几级。上去的 steps 块、平台、下去的 steps - 1 块（最后一下踩到地面）。"""
+        tread = self.tread_m
+        up = [(self.start_x + (k - 1) * tread, self.start_x + k * tread, k) for k in range(1, self.steps + 1)]
+        landing = [(self.top_start_x, self.top_end_x, self.steps)]
+        down = [
+            (self.top_end_x + (k - 1) * tread, self.top_end_x + k * tread, self.steps - k) for k in range(1, self.steps)
+        ]
+        return up + landing + down
+
+
+def add_stairs(spec: mujoco.MjSpec, stairs: Stairs) -> None:
+    """在测试台上加一段楼梯：一级一个从地面垒上来的方块，和地面一样的接触（摩擦、软硬、优先级）。"""
+    for index, (begin, end, level) in enumerate(stairs.boxes()):
+        height = level * stairs.rise_m
+        slippery = level in stairs.slippery_levels
+        geom = spec.worldbody.add_geom(
+            name=f"stair_{index}",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[(end - begin) / 2, stairs.width_m / 2, height / 2],
+            pos=[(begin + end) / 2, 0.0, height / 2],
+            contype=0,
+            conaffinity=1,
+            priority=FLOOR_PRIORITY,
+            solref=list(CONTACT_SOLREF),
+            rgba=list(SLIPPERY_RGBA if slippery else STAIR_RGBA),
+        )
+        if slippery:
+            geom.friction = list(SLIPPERY_FRICTION)
 
 
 def stiffness_for(peak_torque_nm: float) -> float:

@@ -47,7 +47,9 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  nova_body，练出来的策略: policy（照规约读进来、核对） policy_runner（接到身体上：观测，动作变成关节的命令）
                  spine（脊髓层接到身体上：照模型建、每 1 毫秒一步） estimation（状态估计接到身体上：IMU、腿的运动学、着地）
                  spinal（脊髓层合起来：反射 → 硬限制和换算；皮肤管哪几个关节；刹车的阻尼）
-                 policy_walk（按命令表考走路的策略）
+                 policy_bodies（练的时候的身体：推哪里、状态估计用哪个 IMU、哪两只脚）
+                 policy_bench（测试台上跑一个策略：小脑层 → 脊髓层 → 驱动器 → 仿真，状态估计跟着；站着、躺着开始；楼梯）
+                 policy_walk（按命令表考走路的策略） p2_exam（P2 的考试：站 1 小时、被推、走 1 公里、上下楼梯、起来）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
                  live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
                  channel（给每个网页发东西的队列）
@@ -93,6 +95,7 @@ docker compose run --rm train pytest                           # 训练这边的
 docker compose run --rm train python -m nova_train.train <任务> ... # 训练，参数和 mjlab 的 train 一样（见 train/README.md）
 docker compose run --rm train python -m nova_train.export_policy <任务> <那次训练的目录> --name <名字> --body <身体>  # 交给测试台
 docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json  # 在测试台上考走路
+docker compose run --rm body python -m nova_body.p2_exam /results/policies/<名字>/contract.json  # P2 的考试（几个进程一起考，约 15 分钟）
 docker compose run --rm train-lock                             # 改了 train/pyproject.toml 以后重新锁版本
 ```
 
@@ -117,18 +120,24 @@ docker compose run --rm train-lock                             # 改了 train/py
   - 脊髓层照 MuJoCo 的模型建（`spine_for`）：驱动器要是位置控制的，带着一个关节或者一根固定肌腱；力的上限用模型里写的（驱动器那一层每一步改它以前的），模型在关节上写了力矩上限就取小的。脊髓层的关节顺序是"驱动器带着的关节，按模型里的顺序"，和 `Body.joints` 一样。
   - 并联的一对两个关节软硬不一样时，驱动器那边的软硬有交叉的项：驱动器只管对角的，交叉的由脊髓层每 1 毫秒按读数算成前馈力。限过的部分从前馈力里扣，目标、软硬照小脑层给的。
   - 策略（`PolicyRunner`）只给关节的命令（`JointCommand`），经过脊髓层（`step_spine`）和驱动器那一层（`DriveLayer.command_impedance`：目标、刚度、阻尼、前馈力一起晚 1 毫秒到；前馈力放在 MuJoCo 的 position 驱动器的偏置里）。策略不管的关节要测试台给命令（`base`）。
-  - 状态估计（`estimation.py`）：IMU 的读数来自 `SensorModel`（它要的是 `SensorList`：`Body` 或 `SensorSet`），腿的运动学用一份自己的仿真状态（骨盆放在原点），关节的角度从驱动器的读数换算（像编码器）。着地的点"会滑多少"的噪声不能给大（给 0.1 m/s/√Hz 时站着也差 0.1 m/s），现在是 0.002。练的时候的身体（规约里的 `body.name`）用哪个 IMU、哪两只脚写在 `POLICY_BODY_SETUPS`；测试台的身体用 `setup_for_body`。`policy_walk` 走两遍：策略看仿真里的真数、看身体自己感觉到的（`BodySense`）。
-  - 反射（`reflexes.hpp`、`spinal.py`）在小脑层的命令和硬限制之间：先改命令（变软、顶住、断力），再由 Spine 守住硬限制；保护的反射把每个驱动器能出的力的比例交给 Spine（`actuator_force_scale`）。跌倒、停止一直留着，直到 `reset`；停止只升不降。2 类停止只标出来（要小脑层停下来站住），1 类的"坐下"等 2.6 步。碰撞只看手臂的皮肤（`SkinMap`）。0 类停止的刹车阻尼是驱动器的 Km²（没有驱动器模型的身体是 0）。走路的考试也走整条脊髓层（`SpinalLayer`）。
+  - 状态估计（`estimation.py`）：IMU 的读数来自 `SensorModel`（它要的是 `SensorList`：`Body` 或 `SensorSet`），腿的运动学用一份自己的仿真状态（骨盆放在原点），关节的角度从驱动器的读数换算（像编码器）。着地的点"会滑多少"的噪声不能给大（给 0.1 m/s/√Hz 时站着也差 0.1 m/s），现在是 0.002。练的时候的身体（规约里的 `body.name`）用哪个 IMU、哪两只脚、推哪里写在 `policy_bodies.POLICY_BODIES`；测试台的身体用 `setup_for_body`。G1 脚上没有力传感器，着地用仿真里脚和地面的接触力：地面是固定在世界上的形状（平地、楼梯的每一级），不只是叫 floor 的那一块。`policy_walk` 走两遍：策略看仿真里的真数、看身体自己感觉到的（`BodySense`）。
+  - 反射（`reflexes.hpp`、`spinal.py`）在小脑层的命令和硬限制之间：先改命令（变软、顶住、断力），再由 Spine 守住硬限制；保护的反射把每个驱动器能出的力的比例交给 Spine（`actuator_force_scale`）。跌倒、停止一直留着，直到 `reset`；停止只升不降。2 类停止只标出来（要小脑层停下来站住），1 类的"坐下"等 2.6 步。碰撞只看手臂的皮肤（`SkinMap`）。0 类停止的刹车阻尼是驱动器的 Km²（没有驱动器模型的身体是 0）。走路的考试也走整条脊髓层（`SpinalLayer`）。跌倒的反射可以关掉（`fall_armed`）：考"起来"时关掉，因为躺着本来就是歪的（以后是小脑层在做起来的动作时关）；关掉只是不判断新的摔倒，已经在摔倒的要 `reset`。测试台不认识的身体没有状态估计，反射看真的歪斜。跌倒的门槛（歪过 50°，或者歪过 35° 又每秒倒 3 弧度以上）是 2.2 步按 G1 被推的数定的（88 次，推的时刻错开）：原来的 40°、25°、每秒 1.5 弧度把救得回来的也当成在摔倒，变软了反而摔了（往左、往右推时扛得住的因此少了一档）。G1 最多从 46° 救回来，30° 上下时还会每秒倒 3.8 弧度：光看歪斜分不清，所以宁可晚报（2.6 步换成更好的判断）。改门槛以前先把反射关掉推一遍：救得回来的最多歪多少、倒得多快，救不回来的提前多久报。
+- **P2 的考试**（`p2_exam.py`，2.2 步，为什么这样做）：
+  - 都在 `PolicyBench` 上考（小脑层 → 脊髓层 → 驱动器那一层 → 仿真），策略看身体自己感觉到的；裁判看仿真里的真数。几道题互不相干，每一份一个进程（用 spawn：父进程里已经有 ONNX 的线程）。
+  - 摔倒 = 骨盆歪过 60° 或者离脚下的地面低到站着时的一半（楼梯上从骨盆下面那一级算）；站着 = 至少站着时的八成高、歪不过 20°。
+  - 被推照 P1（胸上 0.5 秒，力按体重的比例），从 4% 起每档加 4%，到 60%，推到倒了为止；四个方向。每档推 4 次，推的时刻在策略的一个周期里错开（推到时策略算到哪一步不一样，同一档 G1 最多差 9°、倒不倒都会变），4 次都没倒才算扛得住。走 1 公里是一圈 8 段的命令（往前 0.5~1.1 m/s、转弯、横着、后退）一圈一圈地走。
+  - 楼梯是套内楼梯里最难的（一级 0.20 m、踏面 0.22 m，上 15 级、平台、下 15 级），三种：平常的、中间往右推一下（体重的 10%，0.3 秒）、第 8 级是滑的（摩擦 0.3）。上了几级、下了几级按"站得好好的"走到的最远的地方算（掉下去、扑上去不算）。
+  - 起来：从趴着、仰着、侧躺着（都是头朝 +x）开始，跌倒的反射关掉，10 秒内站起来、再站住 2 秒才算。
 - **训练**（`train/`，为什么这样做）：
   - 训练的容器用显卡（compose 里的 `deploy.resources`），镜像 10.6 GB，要的时候才开。Warp 第一次用时要编译显卡的程序，编译好的留在 `train-cache` 卷里。
   - 版本锁在 `train/uv.lock`（uv；`exclude-newer` 只要两周以前发布的）。改了 `train/pyproject.toml` 先 `docker compose run --rm train-lock`，再 `docker compose build train`；镜像用 `uv sync --locked`，锁和 pyproject 对不上就不装。
   - mjlab 用 2026-11-01 那一版（1.6.0）。它写的是 MuJoCo 3.16，我们用 override 装 3.17（和身体一样）。绕开的四处，都不改 mjlab：`MUJOCO_GL=disable`（容器里没有 EGL）；`GIT_PYTHON_REFRESH=quiet`（没有 git）；训练用 `nova_train.train`，它关掉"解的次数用完了"的提醒（迭代、线搜索；接触、约束放不下的提醒留着）；导出身体时按训练的设置另建一份 Entity（已经接进场景的那一份，3.17 里再复制会崩）。
   - 在 Git Bash 里给容器传 `/results/...` 这样的路径要加 `MSYS_NO_PATHCONV=1`，不然会变成 Windows 的路径（训练的记录写进过 `train/E:/...`）。PowerShell 里不用。
-  - **只认测试台的分数**：练完用 `export_policy` 导出（ONNX、练的时候的身体模型、规约），在测试台上考（`policy_walk`）。导出时比一比 ONNX 和 PyTorch 的动作，对不上就不交。
+  - **只认测试台的分数**：练完用 `export_policy` 导出（ONNX、练的时候的身体模型、规约），在测试台上考（`policy_walk`、`p2_exam`）。导出时比一比 ONNX 和 PyTorch 的动作，对不上就不交。
   - 策略的规约只写在 `contracts/policy`：训练那边写，测试台读，两边都照 JSON Schema 检查。规约表达不了的（观测的历史、剪裁、延迟、每一维的缩放）导出时就拒绝；测试台的 `PolicyRunner` 对不上（关节、驱动器、IMU 的点、步长凑不成策略的周期）就拒绝；命令超出练过的范围拒绝，不剪。规约里哪个数的意思变了，`contract_version` 加一。
   - 身体那边测试用的小策略（`body/tests/fixtures/policy`）是 `nova_train.fixtures` 做的（身体的容器里没有做 ONNX 的库），训练这边的测试核对提交的和做出来的一个字节都不差；改了要重新做、一起提交。
   - 量显卡上的显存用 Warp 自己记的（`wp.get_mempool_used_mem_current`）：Warp 会留着用过的显存，"显卡还剩多少"量不准（量出过负数）。
-  - mjlab 自带的 G1 和测试台的 G1（Menagerie 的 `g1.xml`）不一样：碰撞的形状、关节的摩擦、转子惯量、软硬都不一样。策略是在哪个身体上练的，规约里写着（`body`），`policy_walk` 用那一个。
+  - mjlab 自带的 G1 和测试台的 G1（Menagerie 的 `g1.xml`）不一样：碰撞的形状、关节的摩擦、转子惯量、软硬都不一样。策略是在哪个身体上练的，规约里写着（`body`），测试台（`policy_bench`）用那一个。
 - **身体的传感器读到的不是理想的数**（1.6 步，`sensing.py`）：IMU、六轴力、接触力都加上噪声（按数据手册的噪声密度）、零偏（每一回随机取一次）、延迟（IMU 2 毫秒、六轴力 1 毫秒、接触力 2 毫秒）。实时的仿真每一步读一次，网页上"感觉"那一块给的是它们；测试按传感器的精度比（零偏 + 几倍的噪声），不按理想的数比。测试台自己量的（地面托着多少、压力中心）还是仿真里的真数。
 - **用踝的六轴力算压力中心要扣掉脚自己**（`standing.pressure_center_from_ankle` 的 `FootLoad`）：传感器在脚的上面，脚的重量（和脚加速时要的力）也压在地上，却不经过传感器。不扣差半毫米多，扣了差不到 0.05 mm。脚的加速度像加速度计那样读（站着是朝上的 9.81），真机上用脚的 IMU。
 - **逆运动学一帧一帧解，要防它在一帧里跳**（跳一下就算出几倍的假力矩，1.5 步踩过）：关节的边是软的（离边 5° 开始不划算）；

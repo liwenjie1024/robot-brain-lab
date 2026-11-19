@@ -16,7 +16,6 @@ import mujoco
 import nova_rt
 import numpy as np
 
-from nova_body.bench import FLOOR
 from nova_body.body import Body, Imu, ImuGrade
 from nova_body.policy_runner import BodySense, root_body
 from nova_body.sensing import ACCELEROMETER, GYRO, SensorModel, SensorSet
@@ -38,6 +37,7 @@ INITIAL_POSITION_M = 0.001
 CONTACT_ON_SHARE = 0.10
 CONTACT_OFF_SHARE = 0.05
 SPATIAL_SIZE = 6
+WORLD_BODY = 0
 
 
 @dataclass(frozen=True)
@@ -50,25 +50,6 @@ class EstimatorSetup:
     grade: ImuGrade
     feet: tuple[str, ...]
     foot_bodies: tuple[str, ...]
-
-
-# 练的时候的身体（规约里的 body.name）：状态估计用哪个 IMU、哪两只脚。
-POLICY_BODY_SETUPS: dict[str, EstimatorSetup] = {
-    "unitree_g1": EstimatorSetup(
-        imu_site="imu_in_pelvis",
-        accelerometer="imu_lin_acc",
-        gyro="imu_ang_vel",
-        grade=ImuGrade.STANDARD,
-        feet=("left_foot", "right_foot"),
-        foot_bodies=("left_ankle_roll_link", "right_ankle_roll_link"),
-    ),
-}
-
-
-def setup_for_policy_body(body_name: str) -> EstimatorSetup:
-    if body_name not in POLICY_BODY_SETUPS:
-        raise ValueError(f"测试台不知道身体 {body_name} 的 IMU 和脚在哪（POLICY_BODY_SETUPS 里没有）")
-    return POLICY_BODY_SETUPS[body_name]
 
 
 def setup_for_body(body: Body, model: mujoco.MjModel) -> EstimatorSetup:
@@ -150,13 +131,13 @@ class ContactDetector:
 
 
 class GroundContact:
-    """仿真里每只脚和地面之间的法向接触力（牛顿）。G1 脚上没有力传感器，测试台拿它代替。"""
+    """仿真里每只脚和地面之间的法向接触力（牛顿）。G1 脚上没有力传感器，测试台拿它代替。
 
-    def __init__(self, model: mujoco.MjModel, foot_bodies: Sequence[str], floor_geom: str) -> None:
+    地面是固定在世界上的形状：平地，还有楼梯的每一级。
+    """
+
+    def __init__(self, model: mujoco.MjModel, foot_bodies: Sequence[str]) -> None:
         self._model = model
-        self._floor = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, floor_geom)
-        if self._floor < 0:
-            raise ValueError(f"模型里没有地面 {floor_geom}")
         feet = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name) for name in foot_bodies]
         if min(feet) < 0:
             raise ValueError(f"模型里没有这些脚：{', '.join(foot_bodies)}")
@@ -175,9 +156,10 @@ class GroundContact:
         wrench = np.zeros(SPATIAL_SIZE)
         for index in range(data.ncon):
             contact = data.contact[index]
-            if self._floor not in (contact.geom1, contact.geom2):
+            first, second = self._model.geom_bodyid[contact.geom1], self._model.geom_bodyid[contact.geom2]
+            if (first == WORLD_BODY) == (second == WORLD_BODY):
                 continue
-            other = contact.geom2 if contact.geom1 == self._floor else contact.geom1
+            other = contact.geom2 if first == WORLD_BODY else contact.geom1
             foot = self._foot_of_body[self._model.geom_bodyid[other]]
             if foot >= 0:
                 mujoco.mj_contactForce(self._model, data, index, wrench)
@@ -262,7 +244,7 @@ class BodyFeel:
         self._sensors = SensorModel(model, SensorSet(imus=(imu,)), seed)
         weight = mujoco.mj_getTotalmass(model) * float(np.linalg.norm(model.opt.gravity))
         self._estimator = StateEstimator(model, setup, spine_joints(model), weight)
-        self._ground = GroundContact(model, setup.foot_bodies, FLOOR)
+        self._ground = GroundContact(model, setup.foot_bodies)
         self._imu = _site(model, setup.imu_site)
         if model.site_bodyid[self._imu] != root_body(model):
             raise ValueError(f"IMU 的点 {setup.imu_site} 要在骨盆上（策略的重力方向在骨盆的坐标里）")

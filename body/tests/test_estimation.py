@@ -9,18 +9,17 @@ import numpy as np
 import pytest
 
 from nova_body import actuation
-from nova_body.bench import FLOOR, STAND_KEY
+from nova_body.bench import STAND_KEY
 from nova_body.body import ImuGrade
 from nova_body.estimation import (
-    POLICY_BODY_SETUPS,
     BodyFeel,
     ContactDetector,
     GroundContact,
     LegKinematics,
     setup_for_body,
-    setup_for_policy_body,
     tilt_error_deg,
 )
+from nova_body.policy_bodies import info_for
 from nova_body.spine import spine_for, spine_joints
 from nova_body.standing import drive_layer
 
@@ -114,7 +113,7 @@ def test_ground_contact_adds_up_to_the_weight(nova):
     for _ in range(500):
         actuation.step(model, data, drives)
     setup = setup_for_body(body, model)
-    forces = GroundContact(model, setup.foot_bodies, FLOOR).forces(data)
+    forces = GroundContact(model, setup.foot_bodies).forces(data)
     weight = mujoco.mj_getTotalmass(model) * 9.81
     assert forces.sum() == pytest.approx(weight, rel=0.05)
     assert forces.min() > 0.3 * weight
@@ -148,11 +147,15 @@ def test_the_setup_uses_the_precise_pelvis_imu_and_the_soles(nova):
     assert set(setup.feet) == {"left_sole", "right_sole"}
 
 
-def test_an_unknown_policy_body_is_refused():
-    """测试台不认识的身体（不知道 IMU、脚在哪）就拒绝；练 G1 的那个认得。"""
-    assert "unitree_g1" in POLICY_BODY_SETUPS
-    with pytest.raises(ValueError, match="不知道身体 robot_x"):
-        setup_for_policy_body("robot_x")
+def test_the_g1_policy_body_is_known_and_others_are_not():
+    """练 G1 的那个身体测试台认得（推胸、做状态估计）；不认识的推骨盆、不做状态估计。"""
+    g1 = info_for("unitree_g1")
+    assert g1.trunk == "torso_link"
+    assert g1.estimator is not None
+    assert g1.estimator.grade == ImuGrade.STANDARD
+    unknown = info_for("robot_x")
+    assert unknown.trunk is None
+    assert unknown.estimator is None
 
 
 def test_tilt_error_ignores_yaw():

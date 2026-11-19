@@ -3,7 +3,8 @@
 // 脊髓层的反射（系统结构第 2 节"脊髓层的反射"，全部每 1 毫秒，不经过 AI）。核心里的四种：
 // - 保护：驱动器的绕组热了，先把它能出的力降下来（比驱动器自己降额早），并且告诉小脑层；
 // - 碰撞：身体的一段被碰到（皮肤受力），带着它的关节变软，碰完了等一会儿再慢慢恢复；
-// - 跌倒：身体歪到救不回来，全身变软、顶住现在的姿势（以后换成学出来的保护性摔倒，P2 的 2.6 步）；
+// - 跌倒：身体歪到救不回来，全身变软、顶住现在的姿势（以后换成学出来的保护性摔倒，P2 的 2.6 步）。
+//   小脑层在做起来的动作时把它关掉（躺着本来就是歪的）；关掉只是不再判断新的摔倒，已经在摔倒的要重新开始才清掉；
 // - 停止：0 类（马上断力，只留刹车的阻尼）、2 类（受控停下、不断电：交给小脑层停下来站住，这里只标出来），
 //   1 类（受控停下再断电：先像 2 类，"慢慢坐下"等 2.6 步）。停止一直留着，直到重新开始。
 // 反射放在小脑层的命令和硬限制之间：先改命令，再由 Spine 守住硬限制。
@@ -40,9 +41,12 @@ struct ReflexConfig {
   double collision_hold_s = 0.5;
   double collision_recovery_s = 0.5;
   // 跌倒：歪过 fall_tilt，或者歪过 warning_tilt 并且还在以 fall_tilt_rate 往下倒，就算救不回来了。
-  double fall_tilt_rad = 0.70;
-  double fall_warning_tilt_rad = 0.44;
-  double fall_tilt_rate_rad_s = 1.5;
+  // 三个数按 G1 被推的数定（2.2 步，88 次，推的时刻错开）：救得回来的最多歪到 46°（那时每秒倒 2.4 弧度），
+  // 在 30° 上下时最快每秒倒 3.8 弧度；救不回来的每秒 3.5~7 弧度。原来的 40°、25°、每秒 1.5 弧度把救得回来的
+  // 也当成在摔倒，变软了反而摔了。光看歪斜分不清救不救得回来，宁可晚报（2.6 步换成更好的判断）。
+  double fall_tilt_rad = 0.87;
+  double fall_warning_tilt_rad = 0.61;
+  double fall_tilt_rate_rad_s = 3.0;
   double fall_stiffness_share = 0.3;
   // 歪斜的变化率先低通滤一下（时间常数），免得一下读数的抖动就当成在倒。
   double tilt_rate_filter_s = 0.02;
@@ -55,6 +59,7 @@ struct ReflexInput {
   Eigen::VectorXd actuator_temperature_c;    // 每个驱动器的绕组温度；不知道的给 NaN（不降额）
   std::vector<bool> joint_contact;           // 每个关节带着的那一段被碰到没有
   StopCategory stop = StopCategory::kNone;
+  bool fall_armed = true;                    // 跌倒的反射开着没有
 };
 
 struct ReflexOutput {
@@ -84,7 +89,7 @@ class Reflexes {
              double dt) const;
   void protect(const ReflexInput& input);
   void soften_collisions(const ReflexInput& input, double dt);
-  void update_fall(double tilt_rad, double dt);
+  void update_fall(double tilt_rad, bool armed, double dt);
   void latch(const Eigen::VectorXd& joint_position);
   void apply_mode(const Eigen::VectorXd& joint_position);
 

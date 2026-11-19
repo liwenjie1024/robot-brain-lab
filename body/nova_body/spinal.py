@@ -130,7 +130,9 @@ class SpinalLayer:
         contacts: Sequence[bool],
         stop: int,
         dt: float,
+        fall_armed: bool = True,
     ) -> SpinalStep:
+        """fall_armed：跌倒的反射开着没有（小脑层在做起来的动作时关掉：躺着本来就是歪的）。"""
         actuator_position = data.actuator_length.copy()
         actuator_velocity = data.actuator_velocity.copy()
         reflex = self._reflexes.step(
@@ -145,6 +147,7 @@ class SpinalLayer:
             list(contacts),
             stop,
             dt,
+            fall_armed,
         )
         result = self._spine.step(
             actuator_position,
