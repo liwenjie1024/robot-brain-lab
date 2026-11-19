@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from nova_body.policy import PolicyError, load_policy
-from nova_body.policy_runner import PolicyRunner, bind_joints, steps_per_action
+from nova_body.policy_runner import BodySense, PolicyRunner, bind_joints, steps_per_action
 from nova_body.spine import JointCommand, spine_for
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "policy"
@@ -243,3 +243,26 @@ def test_joints_the_policy_does_not_drive_follow_the_base_command(policy):
     assert command.stiffness_nm_per_rad[2] == 7.0
     assert command.torque_nm[2] == 0.5
     np.testing.assert_array_equal(command.stiffness_nm_per_rad[:2], [20.0, 30.0])
+
+
+def test_sensed_values_replace_the_simulation_truth(policy):
+    """给了身体自己感觉到的（BodySense），速度、角速度、重力方向就用它的，不用仿真里的真数；关节的还用读数。"""
+    _, runner, data = runner_and_data(policy)
+    sense = BodySense(
+        base_lin_vel=np.array([0.4, -0.1, 0.05]),
+        base_ang_vel=np.array([0.01, 0.02, -0.3]),
+        projected_gravity=np.array([0.1, 0.0, -0.995]),
+    )
+    observation = runner.observation(data, np.zeros(3), sense)
+    np.testing.assert_array_equal(segment(policy, observation, "base_lin_vel"), sense.base_lin_vel)
+    np.testing.assert_array_equal(segment(policy, observation, "base_ang_vel"), sense.base_ang_vel)
+    np.testing.assert_array_equal(segment(policy, observation, "projected_gravity"), sense.projected_gravity)
+    np.testing.assert_allclose(segment(policy, observation, "joint_pos"), [-0.1, 0.2])
+
+
+def test_the_action_follows_the_sensed_gravity(policy):
+    """策略看的是感觉到的重力方向：动作 0（重力的 x）就是给的 0.1。"""
+    _, runner, data = runner_and_data(policy)
+    sense = BodySense(np.zeros(3), np.zeros(3), np.array([0.1, 0.0, -0.995]))
+    runner.step(data, STILL, sense)
+    assert runner.last_action[0] == pytest.approx(0.1, abs=1e-6)

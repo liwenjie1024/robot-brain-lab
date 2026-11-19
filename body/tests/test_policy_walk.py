@@ -102,9 +102,17 @@ def test_the_table_writes_a_dash_for_what_was_not_measured():
         distance_m=0.3,
         fell=True,
         limited_share=0.25,
+        velocity_error_m_s=math.nan,
+        tilt_error_deg=math.nan,
     )
     table = describe([fallen])
     assert "nan" not in table
     assert "—、—、—" in table
     assert "摔了" in table
     assert "25% 的步" in table
+
+
+def test_a_sensed_walk_needs_a_body_the_bench_knows(policy):
+    """测试台不认识的身体（测试用的小身体没有 IMU 的传感器）：只看真数可以走，要策略看感觉到的就拒绝。"""
+    with pytest.raises(ValueError, match="做不了状态估计"):
+        walk(policy, (Segment("站着", 0.1, STILL),), sensed=True)

@@ -17,6 +17,24 @@ from nova_body.spine import JointCommand
 # 步长 x 整数要正好是策略的周期，差这么多以内算正好（浮点数的误差）。
 PERIOD_TOLERANCE = 1e-6
 SPATIAL_SIZE = 6
+# 身体自己感觉得到的那几项观测，在 BodySense 里叫什么。
+SENSED_TERMS = {
+    ObservationTerm.BASE_LIN_VEL: "base_lin_vel",
+    ObservationTerm.BASE_ANG_VEL: "base_ang_vel",
+    ObservationTerm.PROJECTED_GRAVITY: "projected_gravity",
+}
+
+
+@dataclass(frozen=True)
+class BodySense:
+    """身体自己感觉到的（IMU 和状态估计给的），代替仿真里的真数给策略看。
+
+    base_lin_vel、base_ang_vel 在 IMU 的坐标里（m/s、rad/s），projected_gravity 在骨盆的坐标里（单位向量）。
+    """
+
+    base_lin_vel: np.ndarray
+    base_ang_vel: np.ndarray
+    projected_gravity: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -137,11 +155,12 @@ class PolicyRunner:
         self._command = self._resting
         self._step = 0
 
-    def step(self, data: mujoco.MjData, command: Mapping[str, float]) -> JointCommand:
-        """mj_step 之前调用，回这一步的关节命令。命令超出练过的范围、策略给出不是数的动作，都拒绝（PolicyError）。"""
+    def step(self, data: mujoco.MjData, command: Mapping[str, float], sense: BodySense | None = None) -> JointCommand:
+        """mj_step 之前调用，回这一步的关节命令。sense 给了就用身体自己感觉到的速度、角速度、重力方向，
+        不给就用仿真里的真数。命令超出练过的范围、策略给出不是数的动作，都拒绝（PolicyError）。"""
         if self._step % self._steps_per_action == 0:
             command_vector = self._policy.command.vector(command)
-            action = self._policy.act(self.observation(data, command_vector))
+            action = self._policy.act(self.observation(data, command_vector, sense))
             if not np.isfinite(action).all():
                 raise PolicyError("策略给出了不是数的动作（NaN 或无穷大）")
             self._last_action = action
@@ -151,16 +170,22 @@ class PolicyRunner:
         self._step += 1
         return self._command
 
-    def observation(self, data: mujoco.MjData, command_vector: np.ndarray) -> np.ndarray:
+    def observation(
+        self, data: mujoco.MjData, command_vector: np.ndarray, sense: BodySense | None = None
+    ) -> np.ndarray:
         """按规约的顺序接成一行。先 mj_forward：mj_step 以后速度、姿态这些算出来的量还是上一步的。"""
         mujoco.mj_forward(self._model, data)
         parts = [
-            self._term(observation.term, data, command_vector) * observation.scale
+            self._term(observation.term, data, command_vector, sense) * observation.scale
             for observation in self._policy.observations
         ]
         return np.concatenate(parts)
 
-    def _term(self, term: ObservationTerm, data: mujoco.MjData, command_vector: np.ndarray) -> np.ndarray:
+    def _term(
+        self, term: ObservationTerm, data: mujoco.MjData, command_vector: np.ndarray, sense: BodySense | None
+    ) -> np.ndarray:
+        if sense is not None and term in SENSED_TERMS:
+            return np.asarray(getattr(sense, SENSED_TERMS[term]), dtype=float)
         if term in (ObservationTerm.BASE_LIN_VEL, ObservationTerm.BASE_ANG_VEL):
             velocity = np.zeros(SPATIAL_SIZE)
             mujoco.mj_objectVelocity(self._model, data, mujoco.mjtObj.mjOBJ_SITE, self._imu_site, velocity, 1)

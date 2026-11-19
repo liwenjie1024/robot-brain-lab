@@ -2,6 +2,7 @@
 
 身体用练的时候的那个模型（规约里写的、核对过 SHA-256），换成测试台的步长、积分的方法和地面。
 策略给的关节命令经过脊髓层（换成驱动器的命令、守住硬限制）和驱动器那一层（命令晚 1 毫秒到）（2.1 步）。
+状态估计一直跟着跑，量它估得准不准；走两遍：策略看仿真里的真数一遍，看身体自己感觉到的（IMU、状态估计）一遍。
 用法：docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json
 结果写在规约旁边的 walk.json。
 """
@@ -19,6 +20,7 @@ import numpy as np
 from nova_body import actuation
 from nova_body.actuation import DriveLayer
 from nova_body.bench import FLOOR, add_floor, use_bench_settings
+from nova_body.estimation import POLICY_BODY_SETUPS, BodyFeel
 from nova_body.policy import Policy, load_policy
 from nova_body.policy_runner import PolicyRunner, root_body
 from nova_body.spine import impedance_command, spine_for, step_spine
@@ -28,6 +30,8 @@ WALK_RESULT_NAME = "walk.json"
 START_CLEARANCE_M = 0.01
 # 每一段的前面这么久不算：从上一段的速度换过来要时间。
 SETTLE_S = 1.0
+# 每隔这么多步看一次状态估计和真的差多少（每步都看太慢）。
+ESTIMATE_CHECK_EVERY = 20
 # 骨盆歪过这么多度，或者低到开始时的这么多倍，就算摔倒了。
 FALLEN_TILT_DEG = 60.0
 FALLEN_HEIGHT_SHARE = 0.5
@@ -64,6 +68,9 @@ class SegmentResult:
     fell: bool
     # 这一段里，脊髓层把哪个关节的命令改小过的步数占多少（0 是一次都没有）。
     limited_share: float
+    # 状态估计和真的差多少（这一段的平均）：IMU 那一点的速度（m/s）、身体的歪斜（度）。
+    velocity_error_m_s: float
+    tilt_error_deg: float
 
 
 def load_policy_body(policy: Policy) -> mujoco.MjModel:
@@ -103,38 +110,66 @@ def lowest_point_m(model: mujoco.MjModel, data: mujoco.MjData) -> float:
     return lowest
 
 
-def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE) -> list[SegmentResult]:
-    """照命令表走一遍。摔倒了就停，后面的段不走。"""
+def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE, *, sensed: bool = False) -> list[SegmentResult]:
+    """照命令表走一遍。摔倒了就停，后面的段不走。
+
+    sensed：策略看身体自己感觉到的速度、角速度、重力方向（IMU 和状态估计），不看仿真里的真数。
+    """
     model = load_policy_body(policy)
     spine = spine_for(model)
     drives = DriveLayer(model, [None] * model.nu)
     runner = PolicyRunner(model, policy, spine)
     data = start_data(model, policy)
+    feel = _body_feel(model, policy, spine, data, sensed=sensed)
     root = root_body(model)
     start_height = float(data.xpos[root][2])
     timestep = float(model.opt.timestep)
     ground_position = slice(model.jnt_qposadr[_free_joint(model)], model.jnt_qposadr[_free_joint(model)] + 2)
     results = []
     for segment in schedule:
-        samples, distance, fell, limited_steps = [], 0.0, False, 0
+        samples, distance, fell, limited_steps, estimate_errors = [], 0.0, False, 0, []
         steps = round(segment.duration_s / timestep)
         settle_steps = round(SETTLE_S / timestep)
         for step in range(steps):
             before = data.qpos[ground_position].copy()
-            spinal = step_spine(spine, data, runner.step(data, segment.command))
+            sense = feel.step(data, timestep) if feel else None
+            spinal = step_spine(spine, data, runner.step(data, segment.command, sense if sensed else None))
             limited_steps += bool(spinal.limited.any())
             drives.command_impedance(impedance_command(spinal))
             actuation.step(model, data, drives)
+            if feel:
+                feel.sample(data)
             distance += float(np.linalg.norm(data.qpos[ground_position] - before))
             if has_fallen(data, root, start_height):
                 fell = True
                 break
             if step >= settle_steps:
                 samples.append(heading_velocity(model, data))
-        results.append(_segment_result(segment, samples, distance, fell, limited_steps / max(1, step + 1)))
+            if feel and step % ESTIMATE_CHECK_EVERY == 0:
+                estimate_errors.append(feel.errors(data))
+        results.append(
+            _segment_result(
+                segment,
+                samples,
+                distance_m=distance,
+                fell=fell,
+                limited_share=limited_steps / max(1, step + 1),
+                estimate_errors=estimate_errors,
+            )
+        )
         if fell:
             break
     return results
+
+
+def _body_feel(model: mujoco.MjModel, policy: Policy, spine, data: mujoco.MjData, *, sensed: bool) -> BodyFeel | None:
+    """测试台认识这个身体（知道 IMU、脚在哪）就跟着做状态估计；不认识的不做，要策略看感觉到的就拒绝。"""
+    setup = POLICY_BODY_SETUPS.get(policy.body_name)
+    if setup is None:
+        if sensed:
+            raise ValueError(f"测试台不知道身体 {policy.body_name} 的 IMU 和脚在哪，做不了状态估计")
+        return None
+    return BodyFeel(model, setup, spine, data)
 
 
 def heading_velocity(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
@@ -158,7 +193,13 @@ def has_fallen(data: mujoco.MjData, root: int, start_height_m: float) -> bool:
 
 
 def _segment_result(
-    segment: Segment, samples: list[np.ndarray], distance_m: float, fell: bool, limited_share: float
+    segment: Segment,
+    samples: list[np.ndarray],
+    *,
+    distance_m: float,
+    fell: bool,
+    limited_share: float,
+    estimate_errors: list[tuple[float, float]],
 ) -> SegmentResult:
     fields = ("lin_vel_x", "lin_vel_y", "ang_vel_z")
     mean = np.mean(samples, axis=0) if samples else np.full(len(fields), math.nan)
@@ -175,6 +216,8 @@ def _segment_result(
         distance_m=distance_m,
         fell=fell,
         limited_share=limited_share,
+        velocity_error_m_s=float(np.mean([speed for speed, _ in estimate_errors])) if estimate_errors else math.nan,
+        tilt_error_deg=float(np.mean([tilt for _, tilt in estimate_errors])) if estimate_errors else math.nan,
     )
 
 
@@ -185,8 +228,8 @@ def _free_joint(model: mujoco.MjModel) -> int:
 def describe(results: list[SegmentResult]) -> str:
     """一张表：每一段的命令、量到的速度、平均差多少、走了多远、摔了没有。没量到的（一开始就摔了）写 —。"""
     lines = [
-        "| 段 | 命令（前、左、转） | 量到的 | 平均差 | 走了 | 摔了没有 | 脊髓层改小过 |",
-        "|---|---|---|---|---|---|---|",
+        "| 段 | 命令（前、左、转） | 量到的 | 平均差 | 走了 | 摔了没有 | 脊髓层改小过 | 估的速度差 | 估的歪斜差 |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         command = _numbers(result.command.values(), "+.2f")
@@ -194,9 +237,9 @@ def describe(results: list[SegmentResult]) -> str:
         error = _numbers(result.error.values(), ".2f")
         fell = "摔了" if result.fell else "没有"
         limited = f"{result.limited_share:.0%} 的步"
-        lines.append(
-            f"| {result.label} | {command} | {measured} | {error} | {result.distance_m:.1f} m | {fell} | {limited} |"
-        )
+        estimate = f"{_numbers([result.velocity_error_m_s], '.3f')} m/s | {_numbers([result.tilt_error_deg], '.2f')}°"
+        cells = [result.label, command, measured, error, f"{result.distance_m:.1f} m", fell, limited, estimate]
+        lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -209,15 +252,13 @@ def main() -> None:
     parser.add_argument("contract", type=Path, help="策略的规约（contract.json）")
     arguments = parser.parse_args()
     policy = load_policy(arguments.contract)
-    results = walk(policy)
+    runs = {"truth": walk(policy), "sensed": walk(policy, sensed=True)}
     output = arguments.contract.parent / WALK_RESULT_NAME
-    output.write_text(
-        json.dumps(
-            {"policy": policy.name, "segments": [asdict(result) for result in results]}, ensure_ascii=False, indent=2
-        ),
-        encoding="utf-8",
-    )
-    print(describe(results))
+    summary = {name: [asdict(result) for result in results] for name, results in runs.items()}
+    output.write_text(json.dumps({"policy": policy.name, **summary}, ensure_ascii=False, indent=2), encoding="utf-8")
+    for name, title in (("truth", "策略看仿真里的真数"), ("sensed", "策略看身体自己感觉到的（IMU、状态估计）")):
+        print(title)
+        print(describe(runs[name]))
     print(f"写进了 {output}")
 
 

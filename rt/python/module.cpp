@@ -8,15 +8,18 @@
 #include <nanobind/stl/vector.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "nova_rt/estimator.hpp"
 #include "nova_rt/spine.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
+using nova::rt::Estimator;
 using nova::rt::JointLimits;
 using nova::rt::Spine;
 
@@ -75,6 +78,38 @@ Eigen::VectorXd convert(const Spine& spine, const Eigen::VectorXd& values, int o
   Eigen::VectorXd output(output_size);
   (spine.coupling().*Convert)(values, output);
   return output;
+}
+
+Estimator make_estimator(int contact_count, double gyro_noise, double accel_noise, double gyro_bias_walk,
+                         double accel_bias_walk, double contact_noise, double kinematics_noise_m,
+                         const Eigen::Vector3d& gravity, double initial_rotation_rad, double initial_velocity_m_s,
+                         double initial_position_m, double initial_gyro_bias_rad_s, double initial_accel_bias_m_s2) {
+  nova::rt::EstimatorConfig config;
+  config.contact_count = contact_count;
+  config.gyro_noise = gyro_noise;
+  config.accel_noise = accel_noise;
+  config.gyro_bias_walk = gyro_bias_walk;
+  config.accel_bias_walk = accel_bias_walk;
+  config.contact_noise = contact_noise;
+  config.kinematics_noise_m = kinematics_noise_m;
+  config.gravity = gravity;
+  config.initial_rotation_rad = initial_rotation_rad;
+  config.initial_velocity_m_s = initial_velocity_m_s;
+  config.initial_position_m = initial_position_m;
+  config.initial_gyro_bias_rad_s = initial_gyro_bias_rad_s;
+  config.initial_accel_bias_m_s2 = initial_accel_bias_m_s2;
+  return Estimator(config);
+}
+
+void correct(Estimator& estimator, const std::vector<bool>& in_contact, const Eigen::MatrixXd& positions) {
+  if (positions.rows() != static_cast<Eigen::Index>(in_contact.size()) || positions.cols() != 3) {
+    throw std::invalid_argument("着地点的位置要是 N x 3（N 是着地点的个数）");
+  }
+  std::vector<nova::rt::ContactMeasurement> contacts;
+  for (std::size_t contact = 0; contact < in_contact.size(); ++contact) {
+    contacts.push_back({in_contact[contact], positions.row(static_cast<Eigen::Index>(contact)).transpose()});
+  }
+  estimator.correct(contacts);
 }
 
 }  // namespace
@@ -151,4 +186,33 @@ NB_MODULE(_core, module) {
         for (const auto& group : spine.coupling().groups()) groups.emplace_back(group.actuators, group.joints);
         return groups;
       });
+
+  nb::class_<Estimator>(module, "Estimator", "状态估计（带接触的 InEKF）：IMU 往前推，着地的脚纠正。")
+      .def(
+          "__init__",
+          [](Estimator* self, int contact_count, double gyro_noise, double accel_noise, double gyro_bias_walk,
+             double accel_bias_walk, double contact_noise, double kinematics_noise_m, const Eigen::Vector3d& gravity,
+             double initial_rotation_rad, double initial_velocity_m_s, double initial_position_m,
+             double initial_gyro_bias_rad_s, double initial_accel_bias_m_s2) {
+            new (self) Estimator(make_estimator(contact_count, gyro_noise, accel_noise, gyro_bias_walk, accel_bias_walk,
+                                                contact_noise, kinematics_noise_m, gravity, initial_rotation_rad,
+                                                initial_velocity_m_s, initial_position_m, initial_gyro_bias_rad_s,
+                                                initial_accel_bias_m_s2));
+          },
+          "contact_count"_a, "gyro_noise"_a, "accel_noise"_a, "gyro_bias_walk"_a, "accel_bias_walk"_a,
+          "contact_noise"_a, "kinematics_noise_m"_a, "gravity"_a, "initial_rotation_rad"_a = 0.0,
+          "initial_velocity_m_s"_a = 0.0, "initial_position_m"_a = 0.0, "initial_gyro_bias_rad_s"_a = 0.0,
+          "initial_accel_bias_m_s2"_a = 0.0)
+      .def("reset", &Estimator::reset, "rotation"_a, "velocity"_a, "position"_a)
+      .def("propagate", &Estimator::propagate, "gyro"_a, "accel"_a, "dt"_a)
+      .def("correct", &correct, "in_contact"_a, "positions"_a)
+      .def("contact_active", &Estimator::contact_active, "contact"_a)
+      .def("contact_position",
+           [](const Estimator& estimator, int contact) { return Eigen::Vector3d(estimator.contact_position(contact)); })
+      .def_prop_ro("rotation", [](const Estimator& estimator) { return Eigen::Matrix3d(estimator.rotation()); })
+      .def_prop_ro("velocity", [](const Estimator& estimator) { return Eigen::Vector3d(estimator.velocity()); })
+      .def_prop_ro("position", [](const Estimator& estimator) { return Eigen::Vector3d(estimator.position()); })
+      .def_prop_ro("gyro_bias", [](const Estimator& estimator) { return Eigen::Vector3d(estimator.gyro_bias()); })
+      .def_prop_ro("accel_bias", [](const Estimator& estimator) { return Eigen::Vector3d(estimator.accel_bias()); })
+      .def_prop_ro("covariance", [](const Estimator& estimator) { return Eigen::MatrixXd(estimator.covariance()); });
 }

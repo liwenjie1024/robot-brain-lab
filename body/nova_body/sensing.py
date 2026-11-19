@@ -16,11 +16,12 @@
 import math
 from collections import deque
 from dataclasses import dataclass
+from typing import Protocol
 
 import mujoco
 import numpy as np
 
-from nova_body.body import Body, ImuGrade
+from nova_body.body import ForceSensor, Imu, ImuGrade, TouchSensor
 from nova_body.mass_closure import GRAVITY_M_S2
 
 DEG = math.pi / 180.0
@@ -60,6 +61,23 @@ def per_reading_std(density: float, timestep_s: float) -> float:
     return density * math.sqrt(0.5 / timestep_s)
 
 
+class SensorList(Protocol):
+    """传感器模型要的：身体带着的 IMU、六轴力、接触力（`Body` 就是一个；只有一个 IMU 的模型可以用 `SensorSet`）。"""
+
+    imus: tuple[Imu, ...]
+    force_sensors: tuple[ForceSensor, ...]
+    touch_sensors: tuple[TouchSensor, ...]
+
+
+@dataclass(frozen=True)
+class SensorSet:
+    """一组传感器（不是 `Body` 的模型用，比如练的时候的 G1）。"""
+
+    imus: tuple[Imu, ...]
+    force_sensors: tuple[ForceSensor, ...] = ()
+    touch_sensors: tuple[TouchSensor, ...] = ()
+
+
 @dataclass(frozen=True)
 class Readings:
     """身体的传感器这一刻拿得到的（顺序和 body.imus、body.force_sensors、body.touch_sensors 一样）。
@@ -79,7 +97,7 @@ class SensorModel:
     全部的读数排成一行一起算（一步只取一次随机数），所以很快。seed 定了随机数：同样的 seed 每次一样。
     """
 
-    def __init__(self, model: mujoco.MjModel, body: Body, seed: int = 0) -> None:
+    def __init__(self, model: mujoco.MjModel, body: SensorList, seed: int = 0) -> None:
         timestep = float(model.opt.timestep)
         self._rng = np.random.default_rng(seed)
         # 每个传感器：名字、每次读的噪声的标准差、零偏的范围。
@@ -101,6 +119,11 @@ class SensorModel:
         self._bias = np.zeros(len(self._index))
         self._history: deque[np.ndarray] = deque(maxlen=max(IMU_DELAY_STEPS, FORCE_DELAY_STEPS, TOUCH_DELAY_STEPS) + 1)
         self.reset()
+
+    @property
+    def bias(self) -> np.ndarray:
+        """这一回每个读数的零偏（排成一行，和读数一样的顺序；测试和诊断用）。"""
+        return self._bias.copy()
 
     @property
     def ready(self) -> bool:
