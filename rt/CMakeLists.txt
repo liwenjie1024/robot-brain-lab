@@ -13,7 +13,7 @@ option(NOVA_RT_PYTHON "编译给 Python 用的模块（nanobind）" OFF)
 
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
-add_library(nova_rt STATIC src/coupling.cpp src/estimator.cpp src/limits.cpp src/spine.cpp)
+add_library(nova_rt STATIC src/coupling.cpp src/estimator.cpp src/limits.cpp src/reflexes.cpp src/spine.cpp)
 target_include_directories(nova_rt PUBLIC include)
 target_link_libraries(nova_rt PUBLIC Eigen3::Eigen)
 target_compile_options(nova_rt PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Werror)
@@ -22,7 +22,7 @@ if(NOVA_RT_TESTS)
   enable_testing()
   find_package(GTest REQUIRED)
   add_executable(nova_rt_tests tests/test_coupling.cpp tests/test_estimator.cpp tests/test_lie.cpp tests/test_limits.cpp
-                               tests/test_spine.cpp)
+                               tests/test_reflexes.cpp tests/test_spine.cpp)
   target_link_libraries(nova_rt_tests PRIVATE nova_rt GTest::gtest_main)
   target_compile_options(nova_rt_tests PRIVATE -Wall -Wextra -Werror)
   include(GoogleTest)

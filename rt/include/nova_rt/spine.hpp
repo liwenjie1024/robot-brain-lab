@@ -63,6 +63,9 @@ class Spine {
 
   // 一步。命令和读数的长度不对、有不是数的、刚度阻尼是负的，抛 std::invalid_argument。
   const SpineOutput& step(const ActuatorState& state, const JointCommand& command);
+  // 同上，每个驱动器能出的力再乘一个比例（0~1，保护的反射给的：驱动器热了先降下来）。
+  const SpineOutput& step(const ActuatorState& state, const JointCommand& command,
+                          const Eigen::VectorXd& actuator_force_scale);
 
   const SpineConfig& config() const { return config_; }
   const Coupling& coupling() const { return coupling_; }
@@ -73,7 +76,7 @@ class Spine {
   void check(const ActuatorState& state, const JointCommand& command) const;
   void limit_joints(const JointCommand& command);
   void map_group(const Coupling::Group& group, const ActuatorState& state, const JointCommand& command);
-  void limit_actuators(const ActuatorState& state);
+  void limit_actuators(const ActuatorState& state, const Eigen::VectorXd& force_scale);
 
   SpineConfig config_;
   Coupling coupling_;
@@ -82,6 +85,7 @@ class Spine {
   Eigen::VectorXd target_rad_;
   Eigen::VectorXd feedforward_nm_;
   Eigen::VectorXd actuator_force_;
+  Eigen::VectorXd full_force_;
   Eigen::MatrixXd group_stiffness_;
   Eigen::MatrixXd group_damping_;
 };

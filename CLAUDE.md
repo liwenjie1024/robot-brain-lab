@@ -46,6 +46,7 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  baseline_report（基线和 Nova 比的报告）
                  nova_body，练出来的策略: policy（照规约读进来、核对） policy_runner（接到身体上：观测，动作变成关节的命令）
                  spine（脊髓层接到身体上：照模型建、每 1 毫秒一步） estimation（状态估计接到身体上：IMU、腿的运动学、着地）
+                 spinal（脊髓层合起来：反射 → 硬限制和换算；皮肤管哪几个关节；刹车的阻尼）
                  policy_walk（按命令表考走路的策略）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
                  live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
@@ -55,7 +56,7 @@ contracts/       规约（JSON Schema），只写在这一处：sim/ 里是仿�
                  policy/ 里是练出来的策略的规约（看什么、出什么）：训练那边写，测试台读
 rt/             实时分区（C++20，Eigen）：现在是脊髓层（第一版）。include/nova_rt、src: coupling（驱动器 ↔ 关节的换算）
                  limits（关节空间的硬限制） spine（一步：换算、限制、驱动器的命令） estimator（状态估计：带接触的 InEKF）
-                 lie（转动的小工具）。python/（nanobind 的模块 nova_rt，
+                 reflexes（反射：保护、碰撞、跌倒、停止） lie（转动的小工具）。python/（nanobind 的模块 nova_rt，
                  装进身体的镜像） tests/（GoogleTest）。在身体的镜像的第一段（rt-build）里编译
 train/          训练：在显卡上做强化学习（容器 nova-train）。mjlab、MuJoCo Warp、PyTorch，版本锁在 uv.lock
                  nova_train: gpu（显卡能不能用） train（mjlab 的训练，关掉预料之中的提醒） contract（写策略的规约）
@@ -117,6 +118,7 @@ docker compose run --rm train-lock                             # 改了 train/py
   - 并联的一对两个关节软硬不一样时，驱动器那边的软硬有交叉的项：驱动器只管对角的，交叉的由脊髓层每 1 毫秒按读数算成前馈力。限过的部分从前馈力里扣，目标、软硬照小脑层给的。
   - 策略（`PolicyRunner`）只给关节的命令（`JointCommand`），经过脊髓层（`step_spine`）和驱动器那一层（`DriveLayer.command_impedance`：目标、刚度、阻尼、前馈力一起晚 1 毫秒到；前馈力放在 MuJoCo 的 position 驱动器的偏置里）。策略不管的关节要测试台给命令（`base`）。
   - 状态估计（`estimation.py`）：IMU 的读数来自 `SensorModel`（它要的是 `SensorList`：`Body` 或 `SensorSet`），腿的运动学用一份自己的仿真状态（骨盆放在原点），关节的角度从驱动器的读数换算（像编码器）。着地的点"会滑多少"的噪声不能给大（给 0.1 m/s/√Hz 时站着也差 0.1 m/s），现在是 0.002。练的时候的身体（规约里的 `body.name`）用哪个 IMU、哪两只脚写在 `POLICY_BODY_SETUPS`；测试台的身体用 `setup_for_body`。`policy_walk` 走两遍：策略看仿真里的真数、看身体自己感觉到的（`BodySense`）。
+  - 反射（`reflexes.hpp`、`spinal.py`）在小脑层的命令和硬限制之间：先改命令（变软、顶住、断力），再由 Spine 守住硬限制；保护的反射把每个驱动器能出的力的比例交给 Spine（`actuator_force_scale`）。跌倒、停止一直留着，直到 `reset`；停止只升不降。2 类停止只标出来（要小脑层停下来站住），1 类的"坐下"等 2.6 步。碰撞只看手臂的皮肤（`SkinMap`）。0 类停止的刹车阻尼是驱动器的 Km²（没有驱动器模型的身体是 0）。走路的考试也走整条脊髓层（`SpinalLayer`）。
 - **训练**（`train/`，为什么这样做）：
   - 训练的容器用显卡（compose 里的 `deploy.resources`），镜像 10.6 GB，要的时候才开。Warp 第一次用时要编译显卡的程序，编译好的留在 `train-cache` 卷里。
   - 版本锁在 `train/uv.lock`（uv；`exclude-newer` 只要两周以前发布的）。改了 `train/pyproject.toml` 先 `docker compose run --rm train-lock`，再 `docker compose build train`；镜像用 `uv sync --locked`，锁和 pyproject 对不上就不装。

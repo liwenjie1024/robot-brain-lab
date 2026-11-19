@@ -20,6 +20,7 @@ from nova_body.spine import (
     joint_gains_from_actuators,
     spine_for,
     spine_joints,
+    stand_command,
     step_spine,
 )
 from nova_body.standing import drive_layer, tilt_deg
@@ -32,19 +33,6 @@ def stand_data(model: mujoco.MjModel) -> mujoco.MjData:
     mujoco.mj_resetDataKeyframe(model, data, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, STAND_KEY))
     mujoco.mj_forward(model, data)
     return data
-
-
-def stand_command(body, model: mujoco.MjModel, spine: nova_rt.Spine, data: mujoco.MjData) -> JointCommand:
-    """站姿当成关节的命令：目标是站姿的角度，软硬是测试台给驱动器的软硬换到关节上，前馈是顶住重力的力矩。"""
-    joints = spine_joints(model)
-    stiffness, damping = joint_gains_from_actuators(spine, model.actuator_gainprm[:, 0], -model.actuator_biasprm[:, 2])
-    return JointCommand(
-        position_rad=data.qpos[model.jnt_qposadr[joints]].copy(),
-        velocity_rad_s=np.zeros(len(joints)),
-        stiffness_nm_per_rad=stiffness,
-        damping_nms_per_rad=damping,
-        torque_nm=np.array(body.joint_holding_torques_nm),
-    )
 
 
 def test_the_nova_spine_has_its_five_parallel_pairs(nova):
@@ -126,7 +114,7 @@ def test_nova_stands_through_the_spine_exactly_as_with_actuator_targets(nova):
     data_a, data_b = stand_data(model_a), stand_data(model_b)
     drives_a, drives_b = drive_layer(body, model_a), drive_layer(body, model_b)
     spine = spine_for(model_b, [actuator.drive for actuator in body.actuators])
-    command = stand_command(body, model_b, spine, data_b)
+    command = stand_command(body, model_b, spine)
     drives_a.command(body.stand.ctrl)
     steps = round(STAND_SECONDS / model_a.opt.timestep)
     limited = 0

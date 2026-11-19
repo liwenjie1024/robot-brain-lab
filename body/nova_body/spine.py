@@ -16,6 +16,8 @@ import nova_rt
 import numpy as np
 
 from nova_body.actuation import ImpedanceCommand
+from nova_body.bench import STAND_KEY
+from nova_body.body import Body
 from nova_body.drives import DriveSpec
 
 # 目标离关节范围的两头至少这么远：不让关节撞到头（撞到头的冲击很大，真机上会坏）。
@@ -39,17 +41,16 @@ class JointCommand:
 
 def spine_joints(model: mujoco.MjModel) -> list[int]:
     """驱动器带着的关节在模型里的编号，按模型里的顺序。这就是脊髓层的关节的顺序。"""
-    driven = {joint for transmissions in _model_transmissions(model) for joint, _ in transmissions}
+    driven = {joint for transmissions in model_transmissions(model) for joint, _ in transmissions}
     return sorted(driven)
 
 
 def spine_for(model: mujoco.MjModel, drives: Sequence[DriveSpec | None] | None = None) -> nova_rt.Spine:
     """照模型（和驱动器的模型）建脊髓层。力的上限按模型里写的（驱动器那一层每一步改它以前的）。"""
-    model_transmissions = _model_transmissions(model)
     joints = spine_joints(model)
     index_of = {joint: index for index, joint in enumerate(joints)}
     transmissions = [
-        [(index_of[joint], coefficient) for joint, coefficient in actuator] for actuator in model_transmissions
+        [(index_of[joint], coefficient) for joint, coefficient in actuator] for actuator in model_transmissions(model)
     ]
     peaks = [_actuator_peak(model, actuator) for actuator in range(model.nu)]
     if drives is not None and len(drives) != model.nu:
@@ -68,6 +69,12 @@ def spine_for(model: mujoco.MjModel, drives: Sequence[DriveSpec | None] | None =
         actuator_peak_forces=peaks,
         angle_margin_rad=ANGLE_MARGIN_RAD,
     )
+
+
+def actuator_joint_indices(model: mujoco.MjModel) -> list[list[int]]:
+    """每个驱动器带着的关节，用脊髓层的关节编号。"""
+    index_of = {joint: index for index, joint in enumerate(spine_joints(model))}
+    return [[index_of[joint] for joint, _ in actuator] for actuator in model_transmissions(model)]
 
 
 def step_spine(spine: nova_rt.Spine, data: mujoco.MjData, command: JointCommand) -> nova_rt.StepResult:
@@ -107,6 +114,23 @@ def joint_gains_from_actuators(
     return joint_stiffness, joint_damping
 
 
+def stand_command(body: Body, model: mujoco.MjModel, spine: nova_rt.Spine) -> JointCommand:
+    """站姿当成关节的命令：目标是站姿（模型里的关键帧 stand）的角度，软硬是测试台给驱动器的软硬换到关节上，
+    前馈是顶住重力的力矩。策略不管的关节、测试台让身体站着时用它。"""
+    joints = spine_joints(model)
+    key = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, STAND_KEY)
+    if key < 0:
+        raise SpineError("模型里没有站姿（关键帧 stand）")
+    stiffness, damping = joint_gains_from_actuators(spine, model.actuator_gainprm[:, 0], -model.actuator_biasprm[:, 2])
+    return JointCommand(
+        position_rad=model.key_qpos[key][model.jnt_qposadr[joints]].copy(),
+        velocity_rad_s=np.zeros(len(joints)),
+        stiffness_nm_per_rad=stiffness,
+        damping_nms_per_rad=damping,
+        torque_nm=np.array(body.joint_holding_torques_nm),
+    )
+
+
 def _group_matrices(spine: nova_rt.Spine):
     """每一组的驱动器、关节和换算矩阵 C_g（从单位向量量出来，和 C++ 里用的一样）。"""
     for actuators, joints in spine.groups:
@@ -118,7 +142,7 @@ def _group_matrices(spine: nova_rt.Spine):
         yield (np.array(actuators), np.array(joints)), forward
 
 
-def _model_transmissions(model: mujoco.MjModel) -> list[list[tuple[int, float]]]:
+def model_transmissions(model: mujoco.MjModel) -> list[list[tuple[int, float]]]:
     """每个驱动器带着的（模型里的关节编号、系数）。驱动器"转"的量 = 系数 x 关节角度加起来。"""
     found = []
     for actuator in range(model.nu):

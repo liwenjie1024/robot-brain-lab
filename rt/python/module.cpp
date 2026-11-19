@@ -3,6 +3,7 @@
 
 #include <nanobind/eigen/dense.h>
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -10,17 +11,20 @@
 #include <cstdint>
 #include <stdexcept>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "nova_rt/estimator.hpp"
+#include "nova_rt/reflexes.hpp"
 #include "nova_rt/spine.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
 using nova::rt::Estimator;
 using nova::rt::JointLimits;
+using nova::rt::Reflexes;
 using nova::rt::Spine;
 
 namespace {
@@ -60,10 +64,12 @@ nova::rt::SpineConfig make_config(std::vector<std::string> joint_names, std::vec
 
 StepResult step(Spine& spine, const Eigen::VectorXd& actuator_position, const Eigen::VectorXd& actuator_velocity,
                 const Eigen::VectorXd& position_rad, const Eigen::VectorXd& velocity_rad_s,
-                const Eigen::VectorXd& stiffness, const Eigen::VectorXd& damping, const Eigen::VectorXd& torque_nm) {
+                const Eigen::VectorXd& stiffness, const Eigen::VectorXd& damping, const Eigen::VectorXd& torque_nm,
+                const std::optional<Eigen::VectorXd>& actuator_force_scale) {
   const nova::rt::ActuatorState state{actuator_position, actuator_velocity};
   const nova::rt::JointCommand command{position_rad, velocity_rad_s, stiffness, damping, torque_nm};
-  const auto& output = spine.step(state, command);
+  const auto& output =
+      actuator_force_scale ? spine.step(state, command, *actuator_force_scale) : spine.step(state, command);
   StepResult result{output.actuators.position, output.actuators.stiffness, output.actuators.damping,
                     output.actuators.force,    output.joint_position_rad,   output.joint_velocity_rad_s,
                     output.joint_torque_nm,    Flags(static_cast<Eigen::Index>(output.limited.size()))};
@@ -110,6 +116,41 @@ void correct(Estimator& estimator, const std::vector<bool>& in_contact, const Ei
     contacts.push_back({in_contact[contact], positions.row(static_cast<Eigen::Index>(contact)).transpose()});
   }
   estimator.correct(contacts);
+}
+
+struct ReflexStep {
+  Eigen::VectorXd position_rad;
+  Eigen::VectorXd velocity_rad_s;
+  Eigen::VectorXd stiffness;
+  Eigen::VectorXd damping;
+  Eigen::VectorXd torque_nm;
+  Eigen::VectorXd actuator_force_scale;
+  Flags flags;
+  int mode = 0;
+  double tilt_rate_rad_s = 0.0;
+};
+
+ReflexStep reflex_step(Reflexes& reflexes, const Eigen::VectorXd& position_rad, const Eigen::VectorXd& velocity_rad_s,
+                       const Eigen::VectorXd& stiffness, const Eigen::VectorXd& damping, const Eigen::VectorXd& torque_nm,
+                       const Eigen::VectorXd& joint_position, double tilt_rad,
+                       const Eigen::VectorXd& actuator_temperature_c, const std::vector<bool>& joint_contact, int stop,
+                       double dt) {
+  if (stop < -1 || stop > 2) throw std::invalid_argument("停止的类别要是 -1（不停）、0、1、2");
+  const nova::rt::JointCommand command{position_rad, velocity_rad_s, stiffness, damping, torque_nm};
+  nova::rt::ReflexInput input;
+  input.tilt_rad = tilt_rad;
+  input.actuator_temperature_c = actuator_temperature_c;
+  input.joint_contact = joint_contact;
+  input.stop = static_cast<nova::rt::StopCategory>(stop);
+  const auto& output = reflexes.step(command, joint_position, input, dt);
+  ReflexStep result{output.command.position_rad, output.command.velocity_rad_s, output.command.stiffness_nm_per_rad,
+                    output.command.damping_nms_per_rad, output.command.torque_nm, output.actuator_force_scale,
+                    Flags(static_cast<Eigen::Index>(output.flags.size())), static_cast<int>(output.mode),
+                    output.tilt_rate_rad_s};
+  for (std::size_t joint = 0; joint < output.flags.size(); ++joint) {
+    result.flags(static_cast<Eigen::Index>(joint)) = output.flags[joint];
+  }
+  return result;
 }
 
 }  // namespace
@@ -160,7 +201,7 @@ NB_MODULE(_core, module) {
           "joint_names"_a, "joint_limits"_a, "actuator_names"_a, "transmissions"_a, "actuator_peak_forces"_a,
           "angle_margin_rad"_a = 0.0)
       .def("step", &step, "actuator_position"_a, "actuator_velocity"_a, "position_rad"_a, "velocity_rad_s"_a,
-           "stiffness"_a, "damping"_a, "torque_nm"_a)
+           "stiffness"_a, "damping"_a, "torque_nm"_a, "actuator_force_scale"_a = nb::none())
       .def("joints_from_actuators",
            [](const Spine& spine, const Eigen::VectorXd& values) {
              return convert<&nova::rt::Coupling::joints_from_actuators>(spine, values, spine.joint_count());
@@ -215,4 +256,62 @@ NB_MODULE(_core, module) {
       .def_prop_ro("gyro_bias", [](const Estimator& estimator) { return Eigen::Vector3d(estimator.gyro_bias()); })
       .def_prop_ro("accel_bias", [](const Estimator& estimator) { return Eigen::Vector3d(estimator.accel_bias()); })
       .def_prop_ro("covariance", [](const Estimator& estimator) { return Eigen::MatrixXd(estimator.covariance()); });
+  module.attr("REFLEX_PROTECT") = static_cast<int>(nova::rt::kReflexProtect);
+  module.attr("REFLEX_COLLISION") = static_cast<int>(nova::rt::kReflexCollision);
+  module.attr("REFLEX_FALL") = static_cast<int>(nova::rt::kReflexFall);
+  module.attr("REFLEX_STOP") = static_cast<int>(nova::rt::kReflexStop);
+  module.attr("STOP_NONE") = static_cast<int>(nova::rt::StopCategory::kNone);
+  module.attr("STOP_CATEGORY_0") = static_cast<int>(nova::rt::StopCategory::kCategory0);
+  module.attr("STOP_CATEGORY_1") = static_cast<int>(nova::rt::StopCategory::kCategory1);
+  module.attr("STOP_CATEGORY_2") = static_cast<int>(nova::rt::StopCategory::kCategory2);
+  module.attr("MODE_NORMAL") = static_cast<int>(nova::rt::ReflexMode::kNormal);
+  module.attr("MODE_FALLING") = static_cast<int>(nova::rt::ReflexMode::kFalling);
+  module.attr("MODE_STOPPING") = static_cast<int>(nova::rt::ReflexMode::kStopping);
+  module.attr("MODE_POWER_OFF") = static_cast<int>(nova::rt::ReflexMode::kPowerOff);
+
+  nb::class_<ReflexStep>(module, "ReflexStep", "反射一步的结果（都是复制的）。")
+      .def_ro("position_rad", &ReflexStep::position_rad)
+      .def_ro("velocity_rad_s", &ReflexStep::velocity_rad_s)
+      .def_ro("stiffness", &ReflexStep::stiffness)
+      .def_ro("damping", &ReflexStep::damping)
+      .def_ro("torque_nm", &ReflexStep::torque_nm)
+      .def_ro("actuator_force_scale", &ReflexStep::actuator_force_scale)
+      .def_ro("flags", &ReflexStep::flags)
+      .def_ro("mode", &ReflexStep::mode)
+      .def_ro("tilt_rate_rad_s", &ReflexStep::tilt_rate_rad_s);
+
+  nb::class_<Reflexes>(module, "Reflexes", "脊髓层的反射：保护、碰撞、跌倒、停止。")
+      .def(
+          "__init__",
+          [](Reflexes* self, int joint_count, std::vector<std::vector<int>> actuator_joints,
+             std::vector<double> brake_damping, double warn_temperature_c, double hot_temperature_c,
+             double hot_force_share, double collision_stiffness_share, double collision_hold_s,
+             double collision_recovery_s, double fall_tilt_rad, double fall_warning_tilt_rad,
+             double fall_tilt_rate_rad_s, double fall_stiffness_share, double tilt_rate_filter_s) {
+            nova::rt::ReflexConfig config;
+            config.joint_count = joint_count;
+            config.actuator_joints = std::move(actuator_joints);
+            config.brake_damping = std::move(brake_damping);
+            config.warn_temperature_c = warn_temperature_c;
+            config.hot_temperature_c = hot_temperature_c;
+            config.hot_force_share = hot_force_share;
+            config.collision_stiffness_share = collision_stiffness_share;
+            config.collision_hold_s = collision_hold_s;
+            config.collision_recovery_s = collision_recovery_s;
+            config.fall_tilt_rad = fall_tilt_rad;
+            config.fall_warning_tilt_rad = fall_warning_tilt_rad;
+            config.fall_tilt_rate_rad_s = fall_tilt_rate_rad_s;
+            config.fall_stiffness_share = fall_stiffness_share;
+            config.tilt_rate_filter_s = tilt_rate_filter_s;
+            new (self) Reflexes(std::move(config));
+          },
+          "joint_count"_a, "actuator_joints"_a, "brake_damping"_a, "warn_temperature_c"_a = 90.0,
+          "hot_temperature_c"_a = 110.0, "hot_force_share"_a = 0.5, "collision_stiffness_share"_a = 0.2,
+          "collision_hold_s"_a = 0.5, "collision_recovery_s"_a = 0.5, "fall_tilt_rad"_a = 0.70,
+          "fall_warning_tilt_rad"_a = 0.44, "fall_tilt_rate_rad_s"_a = 1.5, "fall_stiffness_share"_a = 0.3,
+          "tilt_rate_filter_s"_a = 0.02)
+      .def("step", &reflex_step, "position_rad"_a, "velocity_rad_s"_a, "stiffness"_a, "damping"_a, "torque_nm"_a,
+           "joint_position"_a, "tilt_rad"_a, "actuator_temperature_c"_a, "joint_contact"_a, "stop"_a, "dt"_a)
+      .def("reset", &Reflexes::reset)
+      .def_prop_ro("mode", [](const Reflexes& reflexes) { return static_cast<int>(reflexes.mode()); });
 }

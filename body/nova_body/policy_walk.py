@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import mujoco
+import nova_rt
 import numpy as np
 
 from nova_body import actuation
@@ -23,7 +24,8 @@ from nova_body.bench import FLOOR, add_floor, use_bench_settings
 from nova_body.estimation import POLICY_BODY_SETUPS, BodyFeel
 from nova_body.policy import Policy, load_policy
 from nova_body.policy_runner import PolicyRunner, root_body
-from nova_body.spine import impedance_command, spine_for, step_spine
+from nova_body.spinal import SpinalLayer, reflexes_for, tilt_rad
+from nova_body.spine import spine_for
 
 WALK_RESULT_NAME = "walk.json"
 # 开始时脚底离地面这么高，落下去再开始（和练的时候一样，从一点点高的地方放下）。
@@ -68,6 +70,8 @@ class SegmentResult:
     fell: bool
     # 这一段里，脊髓层把哪个关节的命令改小过的步数占多少（0 是一次都没有）。
     limited_share: float
+    # 这一段里，反射动过的步数占多少（正常走路时应该是 0：没热、没被碰、没倒、没停）。
+    reflex_share: float
     # 状态估计和真的差多少（这一段的平均）：IMU 那一点的速度（m/s）、身体的歪斜（度）。
     velocity_error_m_s: float
     tilt_error_deg: float
@@ -117,6 +121,7 @@ def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE, *, sensed: bo
     """
     model = load_policy_body(policy)
     spine = spine_for(model)
+    spinal = SpinalLayer(spine, reflexes_for(model, spine))
     drives = DriveLayer(model, [None] * model.nu)
     runner = PolicyRunner(model, policy, spine)
     data = start_data(model, policy)
@@ -124,18 +129,30 @@ def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE, *, sensed: bo
     root = root_body(model)
     start_height = float(data.xpos[root][2])
     timestep = float(model.opt.timestep)
+    no_temperatures = np.full(model.nu, np.nan)
+    no_contacts = [False] * spine.joint_count
     ground_position = slice(model.jnt_qposadr[_free_joint(model)], model.jnt_qposadr[_free_joint(model)] + 2)
     results = []
     for segment in schedule:
-        samples, distance, fell, limited_steps, estimate_errors = [], 0.0, False, 0, []
+        samples, distance, fell, limited_steps, reflex_steps, estimate_errors = [], 0.0, False, 0, 0, []
         steps = round(segment.duration_s / timestep)
         settle_steps = round(SETTLE_S / timestep)
         for step in range(steps):
             before = data.qpos[ground_position].copy()
             sense = feel.step(data, timestep) if feel else None
-            spinal = step_spine(spine, data, runner.step(data, segment.command, sense if sensed else None))
-            limited_steps += bool(spinal.limited.any())
-            drives.command_impedance(impedance_command(spinal))
+            joint_command = runner.step(data, segment.command, sense if sensed else None)
+            result = spinal.step(
+                data,
+                joint_command,
+                tilt=tilt_rad(feel.estimator.rotation) if feel else 0.0,
+                temperatures=no_temperatures,
+                contacts=no_contacts,
+                stop=nova_rt.STOP_NONE,
+                dt=timestep,
+            )
+            limited_steps += bool(result.limited.any())
+            reflex_steps += bool(result.reflexes.any())
+            drives.command_impedance(result.impedance)
             actuation.step(model, data, drives)
             if feel:
                 feel.sample(data)
@@ -154,6 +171,7 @@ def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE, *, sensed: bo
                 distance_m=distance,
                 fell=fell,
                 limited_share=limited_steps / max(1, step + 1),
+                reflex_share=reflex_steps / max(1, step + 1),
                 estimate_errors=estimate_errors,
             )
         )
@@ -199,6 +217,7 @@ def _segment_result(
     distance_m: float,
     fell: bool,
     limited_share: float,
+    reflex_share: float,
     estimate_errors: list[tuple[float, float]],
 ) -> SegmentResult:
     fields = ("lin_vel_x", "lin_vel_y", "ang_vel_z")
@@ -216,6 +235,7 @@ def _segment_result(
         distance_m=distance_m,
         fell=fell,
         limited_share=limited_share,
+        reflex_share=reflex_share,
         velocity_error_m_s=float(np.mean([speed for speed, _ in estimate_errors])) if estimate_errors else math.nan,
         tilt_error_deg=float(np.mean([tilt for _, tilt in estimate_errors])) if estimate_errors else math.nan,
     )

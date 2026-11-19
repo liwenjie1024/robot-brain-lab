@@ -83,18 +83,28 @@ Spine::Spine(SpineConfig config)
   target_rad_ = Eigen::VectorXd::Zero(joints);
   feedforward_nm_ = Eigen::VectorXd::Zero(joints);
   actuator_force_ = Eigen::VectorXd::Zero(actuators);
+  full_force_ = Eigen::VectorXd::Ones(actuators);
   const auto size = static_cast<Eigen::Index>(largest_group(coupling_));
   group_stiffness_ = Eigen::MatrixXd::Zero(size, size);
   group_damping_ = Eigen::MatrixXd::Zero(size, size);
 }
 
 const SpineOutput& Spine::step(const ActuatorState& state, const JointCommand& command) {
+  return step(state, command, full_force_);
+}
+
+const SpineOutput& Spine::step(const ActuatorState& state, const JointCommand& command,
+                               const Eigen::VectorXd& actuator_force_scale) {
   check(state, command);
+  check_length(actuator_force_scale.size(), actuator_count(), "驱动器的力的比例");
+  if (!((actuator_force_scale.array() > 0.0) && (actuator_force_scale.array() <= 1.0)).all()) {
+    fail("驱动器的力的比例要在 0（不含）到 1 之间");
+  }
   coupling_.joints_from_actuators(state.position, output_.joint_position_rad);
   coupling_.joints_from_actuators(state.velocity, output_.joint_velocity_rad_s);
   limit_joints(command);
   for (const auto& group : coupling_.groups()) map_group(group, state, command);
-  limit_actuators(state);
+  limit_actuators(state, actuator_force_scale);
   return output_;
 }
 
@@ -184,12 +194,12 @@ void Spine::map_group(const Coupling::Group& group, const ActuatorState& state, 
   }
 }
 
-void Spine::limit_actuators(const ActuatorState& state) {
+void Spine::limit_actuators(const ActuatorState& state, const Eigen::VectorXd& force_scale) {
   auto& command = output_.actuators;
   for (Eigen::Index actuator = 0; actuator < actuator_count(); ++actuator) {
     double force = command.stiffness(actuator) * (command.position(actuator) - state.position(actuator)) -
                    command.damping(actuator) * state.velocity(actuator) + command.force(actuator);
-    const double peak = config_.actuator_peak_forces[static_cast<std::size_t>(actuator)];
+    const double peak = config_.actuator_peak_forces[static_cast<std::size_t>(actuator)] * force_scale(actuator);
     if (std::abs(force) > peak) {
       const double limited = std::copysign(peak, force);
       command.force(actuator) -= force - limited;

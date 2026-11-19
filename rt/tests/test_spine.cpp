@@ -155,6 +155,21 @@ TEST(Spine, ASaturatedPairActuatorFlagsBothJoints) {
   EXPECT_NEAR(output.joint_torque_nm(1), 90.0, 1e-12);  // 关节真的得到的：60 + 30
 }
 
+// 说明：保护的反射把一个驱动器能出的力降到 5%（1000 → 50）：要 100 的那一下只出 50，标"驱动器出到顶"；比例不在 0~1 就拒绝。
+TEST(Spine, AForceScaleLowersTheActuatorLimit) {
+  Spine spine(mixed_config());
+  const Eigen::Vector3d joints = Eigen::Vector3d::Zero();
+  JointCommand command = command_of(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
+  command.velocity_rad_s.setZero();
+  command.torque_nm = Eigen::Vector3d(100.0, 0.0, 0.0);
+  const auto state = state_of(spine, joints, joints);
+  const auto& output = spine.step(state, command, Eigen::Vector3d(0.05, 1.0, 1.0));
+  EXPECT_NEAR(output.joint_torque_nm(0), 50.0, 1e-12);
+  EXPECT_EQ(output.limited[0], kLimitActuatorForce);
+  EXPECT_THROW(spine.step(state, command, Eigen::Vector3d(0.0, 1.0, 1.0)), std::invalid_argument);
+  EXPECT_THROW(spine.step(state, command, Eigen::Vector3d(1.5, 1.0, 1.0)), std::invalid_argument);
+}
+
 // 说明：同样的输入算两遍，结果一样；中间夹一步别的输入也一样（一步和一步之间不留东西）。
 TEST(Spine, TheSameInputGivesTheSameOutput) {
   Spine spine(mixed_config());

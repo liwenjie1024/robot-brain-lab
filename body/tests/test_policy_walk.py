@@ -88,6 +88,7 @@ def test_a_short_schedule_gives_one_result_per_segment_walked(policy):
         assert result.command == segment.command
         assert result.distance_m >= 0.0
         assert 0.0 <= result.limited_share <= 1.0
+        assert result.reflex_share == 0.0
     if len(results) < len(schedule):
         assert results[-1].fell
 
@@ -102,6 +103,7 @@ def test_the_table_writes_a_dash_for_what_was_not_measured():
         distance_m=0.3,
         fell=True,
         limited_share=0.25,
+        reflex_share=0.0,
         velocity_error_m_s=math.nan,
         tilt_error_deg=math.nan,
     )
