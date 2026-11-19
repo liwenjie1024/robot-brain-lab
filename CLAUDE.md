@@ -19,7 +19,7 @@
 3. **测试**
    - 加功能、改功能，测试一起写。
    - 重要的功能（质量和身体的计算、关节控制、停止和安全、判分、计划）要测：正常、边界值、失败、重复和顺序颠倒。
-   - 测试的说明用中文写（pytest 用 docstring 和 ids，vitest 用 describe 和 it 的名字）。
+   - 测试的说明用中文写（pytest 用 docstring 和 ids，vitest 用 describe 和 it 的名字，GoogleTest 在 TEST 上面写 `// 说明：`）。
    - 身体的测试要真的跑物理（站、走、抓）。数要实测以后再定。
 
 ## 结构
@@ -44,7 +44,8 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  sensing（身体自己的传感器：噪声、零偏、延迟） packaging（放不放得下：驱动器的大小、骨盆）
                  nova_body，基线: third_party（按清单下载、核对外面来的文件） baseline（把 Unitree G1 放上测试台）
                  baseline_report（基线和 Nova 比的报告）
-                 nova_body，练出来的策略: policy（照规约读进来、核对） policy_runner（接到身体上：观测、动作、软硬）
+                 nova_body，练出来的策略: policy（照规约读进来、核对） policy_runner（接到身体上：观测，动作变成关节的命令）
+                 spine（脊髓层接到身体上：照模型建、每 1 毫秒一步）
                  policy_walk（按命令表考走路的策略）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
                  live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
@@ -52,6 +53,9 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
 contracts/       规约（JSON Schema），只写在这一处：sim/ 里是仿真和网页之间的三种东西：scene（身体的样子）、
                  message（招呼、状态、答复）、command（命令）。仿真（jsonschema）和网页（ajv）用同一份文件检查
                  policy/ 里是练出来的策略的规约（看什么、出什么）：训练那边写，测试台读
+rt/             实时分区（C++20，Eigen）：现在是脊髓层（第一版）。include/nova_rt、src: coupling（驱动器 ↔ 关节的换算）
+                 limits（关节空间的硬限制） spine（一步：换算、限制、驱动器的命令）。python/（nanobind 的模块 nova_rt，
+                 装进身体的镜像） tests/（GoogleTest）。在身体的镜像的第一段（rt-build）里编译
 train/          训练：在显卡上做强化学习（容器 nova-train）。mjlab、MuJoCo Warp、PyTorch，版本锁在 uv.lock
                  nova_train: gpu（显卡能不能用） train（mjlab 的训练，关掉预料之中的提醒） contract（写策略的规约）
                  export_policy（导出给测试台） nova_warp（Nova 在显卡上的仿真） fixtures（测试用的小策略）
@@ -80,6 +84,8 @@ docker compose up -d sim                                       # 只启动实时
 npm --prefix view run contracts                                # 改了 contracts/ 里的规约以后，重新生成网页用的类型
 npm --prefix view run fixtures                                 # 改了规约或身体以后，从开着的仿真里重新抓网页测试用的样本
 npm --prefix view run test                                     # 网页的测试（lint、build 也是这样跑）
+docker compose run --rm rt                                     # 实时分区（C++）：编译、跑 C++ 的测试
+docker compose build body                                      # 改了 rt/ 里的 C++ 以后：重新做身体的镜像（里面装着 nova_rt）
 docker compose run --rm train                                  # 训练的容器：看显卡能不能用（要显卡）
 docker compose run --rm train pytest                           # 训练这边的测试
 docker compose run --rm train python -m nova_train.train <任务> ... # 训练，参数和 mjlab 的 train 一样（见 train/README.md）
@@ -103,6 +109,12 @@ docker compose run --rm train-lock                             # 改了 train/py
 - **驱动器和关节不是一一对应的**（1.6 步）：并联的一对（踝、腰、腕）在模型里是两根"固定肌腱"上的两个驱动器，一个是两个关节的和、一个是差。`Body.actuators` 是驱动器的清单（顺序和模型里的驱动器一样，每个写着带哪几个关节、系数），`Body.joints` 是有驱动器带着的关节（峰值是这个关节单独用力时最多出的，并联的是一个驱动器的两倍）。站姿里每个驱动器的力 `stand.holding_torque_nm` 按驱动器排；要按关节看用 `body.joint_holding_torques_nm`。站姿按 MuJoCo 的力臂（`actuator_moment`，3.17 里是稀疏的，用 `mju_sparse2dense`）解，不管驱动器怎么带关节。
 - **仿真每一步都经过驱动器的那一层**（`actuation.step`）：力的上下限每一步按转速和绕组的温度改（`actuator_forcerange`，改了马上生效），热每 10 毫秒算一次，命令晚 1 毫秒到（`DriveLayer.command`）。这一层改模型，所以仿真要用自己的一份模型（`copy.copy`）。没有驱动器模型的身体（基线）只有延迟。
 - **身体各段之间也碰撞**（1.6 步）：外壳的 conaffinity 是 1；父子两段 MuJoCo 自己不算，腕那里本来就挨着的用 exclude 去掉（站姿里它们插着几毫米）。加新的段要看站姿里有没有插到一起（`strength.self_contacts`）。接触传感器也量得到身体自己碰自己（大腿顶着胸），测"碰到地面没有"要看接触的清单，不要只看接触传感器。
+- **实时分区和脊髓层**（`rt/`、`nova_body/spine.py`，2.1 步，为什么这样做）：
+  - C++20，警告都当错误。`Spine::step` 里不分配内存（缓冲在建的时候分好）；输入不对（长度、不是数、负的软硬）抛 `std::invalid_argument`，到 Python 里是 ValueError。C++ 的测试（GoogleTest）每个 TEST 上面写一行中文的 `// 说明：`。
+  - `nova_rt` 是装进身体的镜像里的（不是挂源码）：改了 `rt/` 要 `docker compose build body`，C++ 的测试是 `docker compose run --rm rt`。
+  - 脊髓层照 MuJoCo 的模型建（`spine_for`）：驱动器要是位置控制的，带着一个关节或者一根固定肌腱；力的上限用模型里写的（驱动器那一层每一步改它以前的），模型在关节上写了力矩上限就取小的。脊髓层的关节顺序是"驱动器带着的关节，按模型里的顺序"，和 `Body.joints` 一样。
+  - 并联的一对两个关节软硬不一样时，驱动器那边的软硬有交叉的项：驱动器只管对角的，交叉的由脊髓层每 1 毫秒按读数算成前馈力。限过的部分从前馈力里扣，目标、软硬照小脑层给的。
+  - 策略（`PolicyRunner`）只给关节的命令（`JointCommand`），经过脊髓层（`step_spine`）和驱动器那一层（`DriveLayer.command_impedance`：目标、刚度、阻尼、前馈力一起晚 1 毫秒到；前馈力放在 MuJoCo 的 position 驱动器的偏置里）。策略不管的关节要测试台给命令（`base`）。
 - **训练**（`train/`，为什么这样做）：
   - 训练的容器用显卡（compose 里的 `deploy.resources`），镜像 10.6 GB，要的时候才开。Warp 第一次用时要编译显卡的程序，编译好的留在 `train-cache` 卷里。
   - 版本锁在 `train/uv.lock`（uv；`exclude-newer` 只要两周以前发布的）。改了 `train/pyproject.toml` 先 `docker compose run --rm train-lock`，再 `docker compose build train`；镜像用 `uv sync --locked`，锁和 pyproject 对不上就不装。

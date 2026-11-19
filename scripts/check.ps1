@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    提交前的本地检查：外面来的文件（基线的模型）齐不齐，身体和仿真（在容器里）的格式、代码规则、测试，
+    提交前的本地检查：外面来的文件（基线的模型）齐不齐，实时分区（C++）的编译和测试，身体和仿真（在容器里）的格式、代码规则、测试，
     报告和代码是不是对得上，训练（在用显卡的容器里）的格式、代码规则、测试，网页的代码规则、类型、测试、打包。
 .EXAMPLE
     .\scripts\check.ps1
@@ -35,6 +35,10 @@ function Invoke-Step([string]$Name, [scriptblock]$Command) {
 # 基线的模型不提交进仓库。已经下载过就只核对一遍（不连网）；没有的、不对的才下载。
 Invoke-Step '外面来的文件：基线的模型和清单一样（没有就下载）' {
     docker compose run --rm --build body python -m nova_body.third_party
+}
+# 实时分区（C++）：编译（警告都当错误）、跑 GoogleTest。--build：改了 rt/ 就重新做编译的镜像。
+Invoke-Step '实时分区（C++）：编译、测试（容器）' {
+    docker compose run --rm --build rt
 }
 Invoke-Step '身体和仿真：格式、代码规则、测试（容器）' {
     docker compose run --rm body sh -c 'ruff format --check . && ruff check . && pytest -q'

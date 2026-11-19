@@ -7,7 +7,7 @@ import mujoco
 import numpy as np
 import pytest
 
-from nova_body.actuation import COMMAND_DELAY_STEPS, HEAT_EVERY_STEPS, DriveLayer, step
+from nova_body.actuation import COMMAND_DELAY_STEPS, HEAT_EVERY_STEPS, DriveLayer, ImpedanceCommand, step
 from nova_body.actuator_mass import best_today_model
 from nova_body.drives import COOLANT_C, DERATE_FROM_C, Cooling, DriveArrays, Temperatures, size_drive
 from nova_body.standing import drive_layer, standing_data
@@ -202,3 +202,59 @@ def test_nova_drives_have_their_full_strength_while_standing(nova):
     assert own.actuator_forcerange[layer.modeled, 1] == pytest.approx(peaks, rel=1e-3)
     assert own.actuator_forcerange[layer.modeled, 0] == pytest.approx(-peaks, rel=1e-3)
     assert len(layer.modeled) == 31
+
+
+def impedance(position: float, stiffness: float, damping: float, force: float) -> ImpedanceCommand:
+    return ImpedanceCommand(np.array([position]), np.array([stiffness]), np.array([damping]), np.array([force]))
+
+
+def test_a_full_command_arrives_one_step_later_all_together():
+    """完整的命令（目标、刚度、阻尼、前馈力）四样一起晚 1 步到；到了以后驱动器照它出力（没到力的上限 100）。"""
+    model = one_joint()
+    data = mujoco.MjData(model)
+    layer = DriveLayer(model, [None])
+    layer.command_impedance(impedance(0.1, 200.0, 1.0, 3.0))
+    layer.before_step(data)
+    assert data.ctrl[0] == 0.0
+    assert model.actuator_gainprm[0, 0] == 1000.0
+    mujoco.mj_step(model, data)
+    layer.after_step(data, TIMESTEP_S)
+    layer.before_step(data)
+    mujoco.mj_forward(model, data)
+    expected = 200.0 * (0.1 - data.qpos[0]) - 1.0 * data.qvel[0] + 3.0
+    assert data.actuator_force[0] == pytest.approx(expected, rel=1e-12)
+
+
+def test_reset_puts_the_file_gains_back():
+    """重新开始：驱动器的软硬、偏置回到模型文件里的。"""
+    model = one_joint()
+    data = mujoco.MjData(model)
+    layer = DriveLayer(model, [None])
+    layer.command_impedance(impedance(0.5, 200.0, 1.0, 3.0))
+    for _ in range(2):
+        layer.before_step(data)
+        layer.after_step(data, TIMESTEP_S)
+    assert model.actuator_gainprm[0, 0] == 200.0
+    layer.reset()
+    assert model.actuator_gainprm[0, 0] == 1000.0
+    assert model.actuator_biasprm[0, 0] == 0.0
+    assert model.actuator_biasprm[0, 2] == -1.0
+
+
+def test_a_full_command_of_the_wrong_length_is_refused():
+    """完整的命令长度不对就拒绝。"""
+    layer = DriveLayer(one_joint(), [None])
+    with pytest.raises(ValueError, match="要给 1 个驱动器"):
+        layer.command_impedance(ImpedanceCommand(np.zeros(2), np.zeros(2), np.zeros(2), np.zeros(2)))
+
+
+def test_a_full_command_needs_position_controlled_actuators():
+    """只出力的驱动器（motor）接不了目标、刚度、阻尼、前馈力的命令。"""
+    spec = mujoco.MjSpec()
+    link = spec.worldbody.add_body(name="link")
+    link.add_joint(name="joint", type=mujoco.mjtJoint.mjJNT_HINGE)
+    link.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.05, 0, 0], mass=1.0)
+    spec.add_actuator(name="motor", trntype=mujoco.mjtTrn.mjTRN_JOINT, target="joint")
+    layer = DriveLayer(spec.compile(), [None])
+    with pytest.raises(ValueError, match="不是位置控制的"):
+        layer.command_impedance(impedance(0.0, 1.0, 0.0, 0.0))

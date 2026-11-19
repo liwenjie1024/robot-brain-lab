@@ -38,6 +38,20 @@ services:
       - ./third_party:/third_party:ro
       - ./contracts:/contracts:ro
 
+  # 实时分区（C++，rt/）：编译、跑 C++ 的测试。源码挂上来（只读），编译在容器里的 /tmp，不写进仓库。
+  #   docker compose run --rm rt
+  rt:
+    image: nova-rt-build
+    build:
+      context: .
+      dockerfile: body/Dockerfile
+      target: rt-build
+    command: >-
+      sh -c "cmake -S /rt -B /tmp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOVA_RT_TESTS=ON
+      && cmake --build /tmp/build && ctest --test-dir /tmp/build --output-on-failure"
+    volumes:
+      - ./rt:/rt:ro
+
   # 训练：用显卡，要的时候才开，用完就退出：
   #   docker compose run --rm train                     看显卡能不能用
   #   docker compose run --rm train pytest              测试

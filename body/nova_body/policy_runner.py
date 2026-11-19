@@ -1,16 +1,18 @@
-"""把一个策略接到测试台上的身体：按策略的周期给它观测，按它的动作设关节的目标。
+"""把一个策略（小脑层）接到测试台上的身体：按策略的周期给它观测，把它的动作变成每个关节的目标和软硬。
 
-这是 2.0 步的第一版：只接"一个关节一个驱动器（位置控制）"的身体，比如 G1。
-并联的一对（Nova 的踝、腰、腕）要先把关节的目标换算成驱动器的命令，那是 2.1 步脊髓层的事。
+策略不直接碰驱动器（2.1 步起）：它给的关节命令（JointCommand）交给脊髓层，脊髓层每 1 毫秒换成每个驱动器的命令
+（并联的一对按和、差换算），中间守住硬限制。策略不管的关节（比如 Nova 的手指）照测试台给的命令（base）顶着。
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import mujoco
+import nova_rt
 import numpy as np
 
 from nova_body.policy import JOINT_TERMS, ObservationTerm, Policy, PolicyError
+from nova_body.spine import JointCommand
 
 # 步长 x 整数要正好是策略的周期，差这么多以内算正好（浮点数的误差）。
 PERIOD_TOLERANCE = 1e-6
@@ -19,64 +21,37 @@ SPATIAL_SIZE = 6
 
 @dataclass(frozen=True)
 class JointBinding:
-    """策略的关节在模型里的位置：角度、转速在 qpos、qvel 的第几个，哪个驱动器带着它。"""
+    """策略的关节在模型和脊髓层里的位置：角度、转速在 qpos、qvel 的第几个，是脊髓层的第几个关节。"""
 
     qpos_addresses: np.ndarray
     dof_addresses: np.ndarray
-    actuator_ids: np.ndarray
+    spine_indices: np.ndarray
     defaults_rad: np.ndarray
     scales_rad: np.ndarray
 
 
-def bind_joints(model: mujoco.MjModel, policy: Policy) -> JointBinding:
-    """找出策略的每个关节和带着它的驱动器。找不到、不是一个关节一个驱动器，都拒绝。"""
-    actuator_of = _single_joint_actuators(model)
-    qpos, dofs, actuators = [], [], []
+def bind_joints(model: mujoco.MjModel, policy: Policy, spine: nova_rt.Spine) -> JointBinding:
+    """找出策略的每个关节在模型、脊髓层里的位置。模型里没有、不是转动的关节、没有驱动器带着，都拒绝。"""
+    spine_index = {name: index for index, name in enumerate(spine.joint_names)}
+    qpos, dofs, indices = [], [], []
     for joint in policy.joints:
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint.name)
         if joint_id < 0:
             raise PolicyError(f"身体的模型里没有关节 {joint.name}")
         if model.jnt_type[joint_id] != mujoco.mjtJoint.mjJNT_HINGE:
             raise PolicyError(f"关节 {joint.name} 不是转动的关节")
-        if joint_id not in actuator_of:
-            raise PolicyError(f"关节 {joint.name} 没有单独带着它的位置驱动器（并联的要等 2.1 步的脊髓层换算）")
+        if joint.name not in spine_index:
+            raise PolicyError(f"关节 {joint.name} 没有驱动器带着（脊髓层管不了它）")
         qpos.append(model.jnt_qposadr[joint_id])
         dofs.append(model.jnt_dofadr[joint_id])
-        actuators.append(actuator_of[joint_id])
+        indices.append(spine_index[joint.name])
     return JointBinding(
         qpos_addresses=np.array(qpos),
         dof_addresses=np.array(dofs),
-        actuator_ids=np.array(actuators),
+        spine_indices=np.array(indices),
         defaults_rad=np.array([joint.default_position_rad for joint in policy.joints]),
         scales_rad=np.array([joint.action_scale_rad for joint in policy.joints]),
     )
-
-
-def _single_joint_actuators(model: mujoco.MjModel) -> dict[int, int]:
-    """关节 → 只带着它一个、传动比是 1 的位置驱动器。"""
-    found: dict[int, int] = {}
-    for actuator in range(model.nu):
-        is_joint = model.actuator_trntype[actuator] == mujoco.mjtTrn.mjTRN_JOINT
-        is_position = (
-            model.actuator_gaintype[actuator] == mujoco.mjtGain.mjGAIN_FIXED
-            and model.actuator_biastype[actuator] == mujoco.mjtBias.mjBIAS_AFFINE
-        )
-        if is_joint and is_position and model.actuator_gear[actuator, 0] == 1.0:
-            found[int(model.actuator_trnid[actuator, 0])] = actuator
-    return found
-
-
-def apply_joint_gains(model: mujoco.MjModel, policy: Policy, binding: JointBinding) -> None:
-    """把策略练的时候的软硬写进驱动器：力矩 = 刚度 x (目标 - 角度) - 阻尼 x 转速，最多出 torque_limit_nm。"""
-    for joint, actuator in zip(policy.joints, binding.actuator_ids, strict=True):
-        model.actuator_gainprm[actuator, :] = 0.0
-        model.actuator_gainprm[actuator, 0] = joint.stiffness_nm_per_rad
-        model.actuator_biasprm[actuator, :] = 0.0
-        model.actuator_biasprm[actuator, 1] = -joint.stiffness_nm_per_rad
-        model.actuator_biasprm[actuator, 2] = -joint.damping_nms_per_rad
-        model.actuator_forcelimited[actuator] = 1
-        model.actuator_forcerange[actuator] = (-joint.torque_limit_nm, joint.torque_limit_nm)
-        model.actuator_ctrllimited[actuator] = 0
 
 
 def steps_per_action(timestep_s: float, rate_hz: float) -> int:
@@ -96,17 +71,42 @@ def root_body(model: mujoco.MjModel) -> int:
     return int(model.jnt_bodyid[free[0]])
 
 
+def policy_command(policy: Policy, binding: JointBinding, base: JointCommand | None, joint_count: int) -> JointCommand:
+    """策略还没算的时候的关节命令：策略的关节在默认的姿势，软硬照规约；别的关节照 base。"""
+    if base is None:
+        if len(binding.spine_indices) != joint_count:
+            raise PolicyError("策略没有管全部的关节，别的关节要测试台给命令（base）")
+        zeros = np.zeros(joint_count)
+        base = JointCommand(zeros, zeros, zeros, zeros, zeros)
+    indices = binding.spine_indices
+    command = JointCommand(*(np.array(values, dtype=float) for values in _fields(base)))
+    command.position_rad[indices] = binding.defaults_rad
+    command.velocity_rad_s[indices] = 0.0
+    command.stiffness_nm_per_rad[indices] = [joint.stiffness_nm_per_rad for joint in policy.joints]
+    command.damping_nms_per_rad[indices] = [joint.damping_nms_per_rad for joint in policy.joints]
+    command.torque_nm[indices] = 0.0
+    return command
+
+
+def _fields(command: JointCommand) -> tuple[np.ndarray, ...]:
+    return (
+        command.position_rad,
+        command.velocity_rad_s,
+        command.stiffness_nm_per_rad,
+        command.damping_nms_per_rad,
+        command.torque_nm,
+    )
+
+
 class PolicyRunner:
-    """测试台每一步（mj_step 之前）调用 step：到了策略的时候就算一次，设好关节的目标。
+    """测试台每一步（mj_step 之前）调用 step：到了策略的时候就算一次，回这一步的关节命令（给脊髓层）。"""
 
-    建的时候会把策略的软硬写进模型的驱动器（apply_joint_gains）。
-    """
-
-    def __init__(self, model: mujoco.MjModel, policy: Policy):
+    def __init__(self, model: mujoco.MjModel, policy: Policy, spine: nova_rt.Spine, base: JointCommand | None = None):
         self._model = model
         self._policy = policy
-        self._binding = bind_joints(model, policy)
-        apply_joint_gains(model, policy, self._binding)
+        self._binding = bind_joints(model, policy, spine)
+        self._resting = policy_command(policy, self._binding, base, spine.joint_count)
+        self._command = self._resting
         self._imu_site = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, policy.imu_site)
         if self._imu_site < 0:
             raise PolicyError(f"身体的模型里没有 IMU 的点 {policy.imu_site}")
@@ -132,18 +132,24 @@ class PolicyRunner:
         return self._last_action.copy()
 
     def reset(self) -> None:
-        """从头开始：上一次的动作清零，下一步就算一次。"""
+        """从头开始：上一次的动作清零，关节回到默认的姿势，下一步就算一次。"""
         self._last_action = np.zeros(self._policy.action_size)
+        self._command = self._resting
         self._step = 0
 
-    def step(self, data: mujoco.MjData, command: Mapping[str, float]) -> None:
-        """mj_step 之前调用。命令超出练过的范围就拒绝（PolicyError）。"""
+    def step(self, data: mujoco.MjData, command: Mapping[str, float]) -> JointCommand:
+        """mj_step 之前调用，回这一步的关节命令。命令超出练过的范围、策略给出不是数的动作，都拒绝（PolicyError）。"""
         if self._step % self._steps_per_action == 0:
             command_vector = self._policy.command.vector(command)
             action = self._policy.act(self.observation(data, command_vector))
+            if not np.isfinite(action).all():
+                raise PolicyError("策略给出了不是数的动作（NaN 或无穷大）")
             self._last_action = action
-            data.ctrl[self._binding.actuator_ids] = self._binding.defaults_rad + self._binding.scales_rad * action
+            position = self._command.position_rad.copy()
+            position[self._binding.spine_indices] = self._binding.defaults_rad + self._binding.scales_rad * action
+            self._command = replace(self._command, position_rad=position)
         self._step += 1
+        return self._command
 
     def observation(self, data: mujoco.MjData, command_vector: np.ndarray) -> np.ndarray:
         """按规约的顺序接成一行。先 mj_forward：mj_step 以后速度、姿态这些算出来的量还是上一步的。"""

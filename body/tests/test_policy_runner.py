@@ -1,5 +1,6 @@
-"""把策略接到身体上的测试：观测的每一项算得对、放得对；按策略的周期才算一次；关节的目标 = 默认 + 动作 x 比例；
-软硬写进驱动器；身体对不上（没有这个关节、没有单独的驱动器、步长凑不成周期）就拒绝。
+"""把策略接到身体上的测试：观测的每一项算得对、放得对；按策略的周期才算一次；策略给的是关节的命令
+（目标 = 默认 + 动作 x 比例，软硬照规约），交给脊髓层；身体对不上（没有这个关节、没有驱动器带着、步长凑不成周期）
+就拒绝；策略不管的关节照测试台给的命令。
 
 用测试用的小策略：动作 0 = 重力方向的 x，动作 1 = 转弯的命令。
 """
@@ -13,6 +14,7 @@ import pytest
 
 from nova_body.policy import PolicyError, load_policy
 from nova_body.policy_runner import PolicyRunner, bind_joints, steps_per_action
+from nova_body.spine import JointCommand, spine_for
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "policy"
 STILL = {"lin_vel_x": 0.0, "lin_vel_y": 0.0, "ang_vel_z": 0.0}
@@ -29,9 +31,9 @@ def fixture_spec(timestep_s: float = 0.001) -> mujoco.MjSpec:
     return spec
 
 
-def runner_and_data(policy, spec: mujoco.MjSpec | None = None):
+def runner_and_data(policy, spec: mujoco.MjSpec | None = None, base: JointCommand | None = None):
     model = (spec or fixture_spec()).compile()
-    runner = PolicyRunner(model, policy)
+    runner = PolicyRunner(model, policy, spine_for(model), base)
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     return model, runner, data
@@ -54,6 +56,16 @@ def yaw_quaternion(angle_rad: float) -> list[float]:
     return [math.cos(angle_rad / 2), 0.0, 0.0, math.sin(angle_rad / 2)]
 
 
+def with_third_joint(spec: mujoco.MjSpec) -> mujoco.MjSpec:
+    """小身体再加一条腿（joint_c）：策略不管它。"""
+    leg = spec.body("pelvis").add_body(name="leg_c", pos=[0.05, 0.0, -0.05])
+    leg.add_joint(name="joint_c", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0], range=[-1, 1])
+    leg.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, fromto=[0, 0, 0, 0, 0, -0.3], size=[0.02, 0, 0], mass=0.5)
+    actuator = spec.add_actuator(name="joint_c", trntype=mujoco.mjtTrn.mjTRN_JOINT, target="joint_c")
+    actuator.set_to_position(kp=10.0)
+    return spec
+
+
 @pytest.mark.parametrize(
     ("timestep", "rate", "steps"),
     [(0.001, 50.0, 20), (0.005, 50.0, 4), (0.001, 1000.0, 1), (0.002, 125.0, 4)],
@@ -73,16 +85,14 @@ def test_steps_per_action_refuses_a_period_the_timestep_cannot_make(timestep, ra
         steps_per_action(timestep, rate)
 
 
-def test_the_runner_writes_the_policy_gains_into_the_actuators(policy):
-    """建的时候把策略的软硬写进驱动器：刚度、阻尼、力矩的上限都照规约。"""
-    model, _, _ = runner_and_data(policy)
-    for joint in policy.joints:
-        actuator = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, joint.name)
-        assert model.actuator_gainprm[actuator, 0] == joint.stiffness_nm_per_rad
-        assert model.actuator_biasprm[actuator, 1] == -joint.stiffness_nm_per_rad
-        assert model.actuator_biasprm[actuator, 2] == -joint.damping_nms_per_rad
-        np.testing.assert_allclose(model.actuator_forcerange[actuator], [-joint.torque_limit_nm, joint.torque_limit_nm])
-        assert model.actuator_forcelimited[actuator] == 1
+def test_the_joint_command_carries_the_policy_gains(policy):
+    """关节的命令里，刚度、阻尼照规约；目标转速、前馈力矩是 0。"""
+    _, runner, data = runner_and_data(policy)
+    command = runner.step(data, STILL)
+    np.testing.assert_array_equal(command.stiffness_nm_per_rad, [20.0, 30.0])
+    np.testing.assert_array_equal(command.damping_nms_per_rad, [1.0, 2.0])
+    np.testing.assert_array_equal(command.velocity_rad_s, [0.0, 0.0])
+    np.testing.assert_array_equal(command.torque_nm, [0.0, 0.0])
 
 
 def test_upright_and_still_the_observation_is_gravity_down_and_offsets(policy):
@@ -138,26 +148,24 @@ def test_a_step_sets_targets_from_default_plus_scaled_action(policy):
     spec = fixture_spec()
     spec.body("pelvis").quat = pitch_quaternion(math.radians(30.0))
     _, runner, data = runner_and_data(policy, spec)
-    runner.step(data, {**STILL, "ang_vel_z": 0.4})
+    command = runner.step(data, {**STILL, "ang_vel_z": 0.4})
     np.testing.assert_allclose(runner.last_action, [0.5, 0.4], atol=1e-6)
-    np.testing.assert_allclose(data.ctrl, [0.1 + 0.5 * 0.5, -0.2 + 0.25 * 0.4], atol=1e-6)
+    np.testing.assert_allclose(command.position_rad, [0.1 + 0.5 * 0.5, -0.2 + 0.25 * 0.4], atol=1e-6)
 
 
 def test_targets_hold_between_policy_steps(policy):
-    """两次之间（20 步，1 毫秒的步长、每秒 50 次）目标不变，命令变了也不变；到第 21 步才按新的命令算。"""
+    """两次之间（20 步，1 毫秒的步长、每秒 50 次）命令不变，给的命令变了也不变；到第 21 步才按新的算。"""
     model, runner, data = runner_and_data(policy)
-    runner.step(data, {**STILL, "ang_vel_z": 0.2})
-    first = data.ctrl.copy()
+    first = runner.step(data, {**STILL, "ang_vel_z": 0.2})
     for _ in range(runner.steps_per_action - 1):
-        runner.step(data, {**STILL, "ang_vel_z": -0.4})
+        assert runner.step(data, {**STILL, "ang_vel_z": -0.4}) is first
         mujoco.mj_step(model, data)
-        np.testing.assert_array_equal(data.ctrl, first)
-    runner.step(data, {**STILL, "ang_vel_z": -0.4})
-    assert data.ctrl[1] == pytest.approx(-0.2 + 0.25 * -0.4, abs=1e-6)
+    later = runner.step(data, {**STILL, "ang_vel_z": -0.4})
+    assert later.position_rad[1] == pytest.approx(-0.2 + 0.25 * -0.4, abs=1e-6)
 
 
-def test_the_last_action_is_fed_back_into_the_next_observation(policy):
-    """上一次的动作放进下一次的观测（last_action）；重新开始就清零。"""
+def test_the_last_action_is_fed_back_and_reset_clears_it(policy):
+    """上一次的动作放进下一次的观测（last_action）；重新开始就清零，关节回到默认的姿势。"""
     _, runner, data = runner_and_data(policy)
     runner.step(data, {**STILL, "ang_vel_z": 0.3})
     observation = runner.observation(data, np.zeros(3))
@@ -166,13 +174,19 @@ def test_the_last_action_is_fed_back_into_the_next_observation(policy):
     np.testing.assert_array_equal(runner.last_action, [0.0, 0.0])
 
 
-def test_a_command_beyond_the_trained_range_stops_the_step(policy):
-    """到了算的那一步，命令超出练过的范围就拒绝，目标不动。"""
+def test_a_command_beyond_the_trained_range_is_refused(policy):
+    """到了算的那一步，命令超出练过的范围就拒绝（不剪）。"""
     _, runner, data = runner_and_data(policy)
-    before = data.ctrl.copy()
     with pytest.raises(PolicyError, match="超出了练过的范围"):
         runner.step(data, {**STILL, "ang_vel_z": 0.6})
-    np.testing.assert_array_equal(data.ctrl, before)
+
+
+def test_an_action_that_is_not_a_number_is_refused(policy):
+    """姿态坏了（四元数是 NaN），策略算出来的动作不是数：拒绝，不交给脊髓层。"""
+    _, runner, data = runner_and_data(policy)
+    data.qpos[3:7] = np.nan
+    with pytest.raises(PolicyError, match="不是数的动作"):
+        runner.step(data, STILL)
 
 
 def test_a_body_without_the_joint_is_refused(policy):
@@ -180,16 +194,18 @@ def test_a_body_without_the_joint_is_refused(policy):
     spec = fixture_spec()
     spec.delete(spec.actuator("joint_b"))
     spec.delete(spec.joint("joint_b"))
+    model = spec.compile()
     with pytest.raises(PolicyError, match="没有关节 joint_b"):
-        bind_joints(spec.compile(), policy)
+        bind_joints(model, policy, spine_for(model))
 
 
-def test_a_joint_without_its_own_position_actuator_is_refused(policy):
-    """关节没有单独带着它的位置驱动器（这里传动比是 2）就拒绝：换算是脊髓层的事。"""
+def test_a_joint_no_actuator_drives_is_refused(policy):
+    """关节在，可是没有驱动器带着它（脊髓层管不了）就拒绝。"""
     spec = fixture_spec()
-    spec.actuator("joint_a").gear = [2.0, 0, 0, 0, 0, 0]
-    with pytest.raises(PolicyError, match="关节 joint_a 没有单独带着它的位置驱动器"):
-        bind_joints(spec.compile(), policy)
+    spec.delete(spec.actuator("joint_b"))
+    model = spec.compile()
+    with pytest.raises(PolicyError, match="关节 joint_b 没有驱动器带着"):
+        bind_joints(model, policy, spine_for(model))
 
 
 def test_a_body_without_the_imu_site_is_refused(policy):
@@ -197,10 +213,33 @@ def test_a_body_without_the_imu_site_is_refused(policy):
     spec = fixture_spec()
     spec.delete(spec.site("imu"))
     with pytest.raises(PolicyError, match="没有 IMU 的点 imu"):
-        PolicyRunner(spec.compile(), policy)
+        runner_and_data(policy, spec)
 
 
 def test_a_timestep_that_cannot_make_the_policy_period_is_refused(policy):
     """仿真的步长（3 毫秒）凑不成策略的周期（20 毫秒）就拒绝。"""
     with pytest.raises(PolicyError, match="凑不成策略的周期"):
-        PolicyRunner(fixture_spec(timestep_s=0.003).compile(), policy)
+        runner_and_data(policy, fixture_spec(timestep_s=0.003))
+
+
+def test_joints_the_policy_does_not_drive_need_a_base_command(policy):
+    """策略没有管全部的关节（多了一条腿），又没给别的关节的命令：拒绝。"""
+    with pytest.raises(PolicyError, match="别的关节要测试台给命令"):
+        runner_and_data(policy, with_third_joint(fixture_spec()))
+
+
+def test_joints_the_policy_does_not_drive_follow_the_base_command(policy):
+    """策略不管的那条腿照测试台给的命令（目标 0.3、刚度 7）；策略的两个关节照策略。"""
+    base = JointCommand(
+        position_rad=np.array([0.0, 0.0, 0.3]),
+        velocity_rad_s=np.zeros(3),
+        stiffness_nm_per_rad=np.array([1.0, 1.0, 7.0]),
+        damping_nms_per_rad=np.array([0.1, 0.1, 0.7]),
+        torque_nm=np.array([0.0, 0.0, 0.5]),
+    )
+    _, runner, data = runner_and_data(policy, with_third_joint(fixture_spec()), base)
+    command = runner.step(data, STILL)
+    assert command.position_rad[2] == 0.3
+    assert command.stiffness_nm_per_rad[2] == 7.0
+    assert command.torque_nm[2] == 0.5
+    np.testing.assert_array_equal(command.stiffness_nm_per_rad[:2], [20.0, 30.0])

@@ -1,0 +1,19 @@
+# 脊髓层（C++）给 Python 用的模块。在身体的镜像里编译（body/Dockerfile 的第一段），装进测试台。
+[build-system]
+requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "nova-rt"
+version = "0.1.0"
+description = "Nova 的实时分区（C++）：脊髓层"
+requires-python = ">=3.13"
+
+[tool.scikit-build]
+cmake.version = ">=3.26"
+ninja.version = ">=1.11"
+cmake.build-type = "Release"
+wheel.packages = ["python/nova_rt"]
+
+[tool.scikit-build.cmake.define]
+NOVA_RT_PYTHON = "ON"

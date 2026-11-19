@@ -1,5 +1,6 @@
 """仿真里的驱动器（1.6 步）：每一步按转速和绕组的温度定每个驱动器能出多大的力，按它真的出了多大的力算它热了多少；
-命令晚一步（1 毫秒，脊髓层经总线发过去）才到驱动器。
+命令晚一步（1 毫秒，脊髓层经总线发过去）才到驱动器。命令是每个驱动器的目标（`command`），或者脊髓层算的
+完整的命令：目标、刚度、阻尼、前馈力（`command_impedance`，2.1 步）。
 
 模型里的驱动器是"位置 + 阻尼"（代表驱动器里自己跑的阻抗环）。力的上下限每一步改一次：往转的方向推受电压限，
 绕组热了两个方向都降额（drives.DriveSpec 的规则，这里一次算全部的驱动器）。
@@ -8,6 +9,7 @@
 
 from collections import deque
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import mujoco
 import numpy as np
@@ -18,6 +20,17 @@ from nova_body.drives import COOLANT_C, DriveArrays, DriveSpec
 COMMAND_DELAY_STEPS = 1
 # 热每 10 步（10 毫秒）算一次，用这几步力的平方的平均：绕组最快的时间常数也有十几秒，这样足够细，仿真也快。
 HEAT_EVERY_STEPS = 10
+
+
+@dataclass(frozen=True)
+class ImpedanceCommand:
+    """给每个驱动器的一次完整的命令（脊髓层算的）。驱动器的阻抗环照它出力：
+    力 = 刚度 x (目标 - 位置) - 阻尼 x 转速 + 前馈力。"""
+
+    position: np.ndarray
+    stiffness: np.ndarray
+    damping: np.ndarray
+    force: np.ndarray
 
 
 class DriveLayer:
@@ -33,8 +46,10 @@ class DriveLayer:
         self._modeled = np.array([index for index, drive in enumerate(drives) if drive is not None], dtype=int)
         self._arrays = DriveArrays.of([drive for drive in drives if drive is not None])
         self._file_ranges = model.actuator_forcerange.copy()
+        self._file_gains = model.actuator_gainprm.copy()
+        self._file_biases = model.actuator_biasprm.copy()
         # 还在路上的命令：哪一步到、每个驱动器的目标。
-        self._commands: deque[tuple[int, np.ndarray]] = deque()
+        self._commands: deque[tuple[int, np.ndarray | ImpedanceCommand]] = deque()
         self._step = 0
         self.winding_c = np.full(len(self._modeled), COOLANT_C)
         self.housing_c = np.full(len(self._modeled), COOLANT_C)
@@ -57,6 +72,8 @@ class DriveLayer:
         self._commands.clear()
         self._step = 0
         self._model.actuator_forcerange[:] = self._file_ranges
+        self._model.actuator_gainprm[:] = self._file_gains
+        self._model.actuator_biasprm[:] = self._file_biases
 
     def command(self, targets: Sequence[float]) -> None:
         """发一次命令（每个驱动器的目标）。它晚 COMMAND_DELAY_STEPS 步才到驱动器。"""
@@ -65,16 +82,45 @@ class DriveLayer:
             raise ValueError(f"命令要给 {self._model.nu} 个驱动器的目标，收到的是 {targets.shape}")
         self._commands.append((self._step + COMMAND_DELAY_STEPS, targets))
 
+    def command_impedance(self, command: ImpedanceCommand) -> None:
+        """发一次完整的命令（目标、刚度、阻尼、前馈力一起）。四样一起晚 COMMAND_DELAY_STEPS 步到。
+
+        驱动器都要是"位置 + 阻尼"的（MuJoCo 的 position 驱动器）：前馈力放在它的偏置里。
+        """
+        for name in ("position", "stiffness", "damping", "force"):
+            if getattr(command, name).shape != (self._model.nu,):
+                raise ValueError(
+                    f"命令的 {name} 要给 {self._model.nu} 个驱动器，收到的是 {getattr(command, name).shape}"
+                )
+        position_like = (self._model.actuator_gaintype == mujoco.mjtGain.mjGAIN_FIXED) & (
+            self._model.actuator_biastype == mujoco.mjtBias.mjBIAS_AFFINE
+        )
+        if not position_like.all():
+            raise ValueError("有的驱动器不是位置控制的，接不了目标、刚度、阻尼、前馈力的命令")
+        self._commands.append((self._step + COMMAND_DELAY_STEPS, command))
+
     def before_step(self, data: mujoco.MjData) -> None:
         """这一步开始以前：到了的命令交给驱动器；按现在的转速和温度定力的上下限。"""
         while self._commands and self._commands[0][0] <= self._step:
-            data.ctrl[:] = self._commands.popleft()[1]
+            arrived = self._commands.popleft()[1]
+            if isinstance(arrived, ImpedanceCommand):
+                self._apply_impedance(data, arrived)
+            else:
+                data.ctrl[:] = arrived
         if len(self._modeled) == 0:
             return
         speeds = data.actuator_velocity[self._modeled]
         lower, upper = self._arrays.limits_with(speeds, self._thermal_nm)
         self._model.actuator_forcerange[self._modeled, 0] = lower
         self._model.actuator_forcerange[self._modeled, 1] = upper
+
+    def _apply_impedance(self, data: mujoco.MjData, command: ImpedanceCommand) -> None:
+        """MuJoCo 的 position 驱动器：力 = 增益 x ctrl + 偏置0 + 偏置1 x 位置 + 偏置2 x 转速。"""
+        data.ctrl[:] = command.position
+        self._model.actuator_gainprm[:, 0] = command.stiffness
+        self._model.actuator_biasprm[:, 0] = command.force
+        self._model.actuator_biasprm[:, 1] = -command.stiffness
+        self._model.actuator_biasprm[:, 2] = -command.damping
 
     def after_step(self, data: mujoco.MjData, seconds: float) -> None:
         """这一步走完以后：按每个驱动器真的出了多大的力，算它热了多少。"""

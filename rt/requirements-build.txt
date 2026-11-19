@@ -1,0 +1,5 @@
+# 编译脊髓层（C++）给 Python 用的模块要的库。版本写死，都是发布超过两周的。
+nanobind==3.1.0
+scikit-build-core==1.1.1
+packaging==26.3
+pathspec==1.1.1

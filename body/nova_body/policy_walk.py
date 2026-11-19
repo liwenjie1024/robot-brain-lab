@@ -1,6 +1,7 @@
 """在测试台上考一个按指令走的策略：照一张命令表走一遍，量跟得上没有、摔了没有。
 
 身体用练的时候的那个模型（规约里写的、核对过 SHA-256），换成测试台的步长、积分的方法和地面。
+策略给的关节命令经过脊髓层（换成驱动器的命令、守住硬限制）和驱动器那一层（命令晚 1 毫秒到）（2.1 步）。
 用法：docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json
 结果写在规约旁边的 walk.json。
 """
@@ -15,9 +16,12 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from nova_body import actuation
+from nova_body.actuation import DriveLayer
 from nova_body.bench import FLOOR, add_floor, use_bench_settings
 from nova_body.policy import Policy, load_policy
 from nova_body.policy_runner import PolicyRunner, root_body
+from nova_body.spine import impedance_command, spine_for, step_spine
 
 WALK_RESULT_NAME = "walk.json"
 # 开始时脚底离地面这么高，落下去再开始（和练的时候一样，从一点点高的地方放下）。
@@ -58,6 +62,8 @@ class SegmentResult:
     error: Mapping[str, float]
     distance_m: float
     fell: bool
+    # 这一段里，脊髓层把哪个关节的命令改小过的步数占多少（0 是一次都没有）。
+    limited_share: float
 
 
 def load_policy_body(policy: Policy) -> mujoco.MjModel:
@@ -100,7 +106,9 @@ def lowest_point_m(model: mujoco.MjModel, data: mujoco.MjData) -> float:
 def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE) -> list[SegmentResult]:
     """照命令表走一遍。摔倒了就停，后面的段不走。"""
     model = load_policy_body(policy)
-    runner = PolicyRunner(model, policy)
+    spine = spine_for(model)
+    drives = DriveLayer(model, [None] * model.nu)
+    runner = PolicyRunner(model, policy, spine)
     data = start_data(model, policy)
     root = root_body(model)
     start_height = float(data.xpos[root][2])
@@ -108,20 +116,22 @@ def walk(policy: Policy, schedule: tuple[Segment, ...] = SCHEDULE) -> list[Segme
     ground_position = slice(model.jnt_qposadr[_free_joint(model)], model.jnt_qposadr[_free_joint(model)] + 2)
     results = []
     for segment in schedule:
-        samples, distance, fell = [], 0.0, False
+        samples, distance, fell, limited_steps = [], 0.0, False, 0
         steps = round(segment.duration_s / timestep)
         settle_steps = round(SETTLE_S / timestep)
         for step in range(steps):
             before = data.qpos[ground_position].copy()
-            runner.step(data, segment.command)
-            mujoco.mj_step(model, data)
+            spinal = step_spine(spine, data, runner.step(data, segment.command))
+            limited_steps += bool(spinal.limited.any())
+            drives.command_impedance(impedance_command(spinal))
+            actuation.step(model, data, drives)
             distance += float(np.linalg.norm(data.qpos[ground_position] - before))
             if has_fallen(data, root, start_height):
                 fell = True
                 break
             if step >= settle_steps:
                 samples.append(heading_velocity(model, data))
-        results.append(_segment_result(segment, samples, distance, fell))
+        results.append(_segment_result(segment, samples, distance, fell, limited_steps / max(1, step + 1)))
         if fell:
             break
     return results
@@ -147,7 +157,9 @@ def has_fallen(data: mujoco.MjData, root: int, start_height_m: float) -> bool:
     return tilt_deg > FALLEN_TILT_DEG or float(data.xpos[root][2]) < FALLEN_HEIGHT_SHARE * start_height_m
 
 
-def _segment_result(segment: Segment, samples: list[np.ndarray], distance_m: float, fell: bool) -> SegmentResult:
+def _segment_result(
+    segment: Segment, samples: list[np.ndarray], distance_m: float, fell: bool, limited_share: float
+) -> SegmentResult:
     fields = ("lin_vel_x", "lin_vel_y", "ang_vel_z")
     mean = np.mean(samples, axis=0) if samples else np.full(len(fields), math.nan)
     errors = (
@@ -162,6 +174,7 @@ def _segment_result(segment: Segment, samples: list[np.ndarray], distance_m: flo
         error={name: float(value) for name, value in zip(fields, errors, strict=True)},
         distance_m=distance_m,
         fell=fell,
+        limited_share=limited_share,
     )
 
 
@@ -171,13 +184,19 @@ def _free_joint(model: mujoco.MjModel) -> int:
 
 def describe(results: list[SegmentResult]) -> str:
     """一张表：每一段的命令、量到的速度、平均差多少、走了多远、摔了没有。没量到的（一开始就摔了）写 —。"""
-    lines = ["| 段 | 命令（前、左、转） | 量到的 | 平均差 | 走了 | 摔了没有 |", "|---|---|---|---|---|---|"]
+    lines = [
+        "| 段 | 命令（前、左、转） | 量到的 | 平均差 | 走了 | 摔了没有 | 脊髓层改小过 |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for result in results:
         command = _numbers(result.command.values(), "+.2f")
         measured = _numbers(result.measured.values(), "+.2f")
         error = _numbers(result.error.values(), ".2f")
         fell = "摔了" if result.fell else "没有"
-        lines.append(f"| {result.label} | {command} | {measured} | {error} | {result.distance_m:.1f} m | {fell} |")
+        limited = f"{result.limited_share:.0%} 的步"
+        lines.append(
+            f"| {result.label} | {command} | {measured} | {error} | {result.distance_m:.1f} m | {fell} | {limited} |"
+        )
     return "\n".join(lines)
 
 
