@@ -44,6 +44,8 @@ PUSH_ATTEMPTS = 4
 PUSH_START_S = 2.0
 PUSH_DURATION_S = 0.5
 PUSH_WATCH_S = 4.0
+# 倒了以后再看这么久，量身上砸到地上的那一下。
+FALL_SETTLE_S = 1.0
 PUSH_SHARE_STEP = 0.04
 PUSH_SHARES: tuple[float, ...] = tuple(round(PUSH_SHARE_STEP * level, 2) for level in range(1, 16))
 PUSH_DIRECTIONS: dict[str, tuple[float, float, float]] = {
@@ -111,12 +113,14 @@ class StandResult:
 
 @dataclass(frozen=True)
 class PushAttempt:
-    """推一下：力多大（牛顿），倒了没有，最多歪了多少，跌倒的反射动了没有。"""
+    """推一下：力多大（牛顿），倒了没有，最多歪了多少，跌倒的反射动了没有，
+    身上（脚以外）着地最重的一下是体重的几倍（倒了的时候看它：护没护住自己）。"""
 
     force_n: float
     fell: bool
     max_tilt_deg: float
     fall_reflex: bool
+    impact_weights: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,8 @@ class PushTrial:
     falls: int
     max_tilt_deg: float
     fall_reflex: bool
+    # 倒了的那几次里，身上着地最重的一下是体重的几倍（都没倒是 nan）。
+    fall_impact_weights: float = math.nan
 
     @property
     def held(self) -> bool:
@@ -288,26 +294,29 @@ def push_trial(share: float, attempts: Sequence[PushAttempt]) -> PushTrial:
         falls=sum(attempt.fell for attempt in attempts),
         max_tilt_deg=max(standing) if standing else math.nan,
         fall_reflex=any(attempt.fall_reflex for attempt in attempts),
+        fall_impact_weights=max((a.impact_weights for a in attempts if a.fell), default=math.nan),
     )
 
 
 def push_once(
     policy: Brain, direction: tuple[float, float, float], share: float, delay_s: float, *, sensed: bool
 ) -> PushAttempt:
-    """站稳以后推一下（比 PUSH_START_S 晚 delay_s），再看一会儿倒没倒。"""
+    """站稳以后推一下（比 PUSH_START_S 晚 delay_s），再看一会儿倒没倒；倒了再看 1 秒，量身上砸到地上的那一下。"""
     bench = PolicyBench(policy, sensed=sensed)
     force = share * bench.weight_n * np.array(direction)
     start_s = PUSH_START_S + delay_s
-    max_tilt, fall_reflex, fell = 0.0, False, False
-    for _ in range(round((start_s + PUSH_DURATION_S + PUSH_WATCH_S) / bench.timestep)):
+    end_s = start_s + PUSH_DURATION_S + PUSH_WATCH_S
+    max_tilt, fall_reflex, fell, impact_n = 0.0, False, False, 0.0
+    while bench.time_s < end_s - TIME_EPSILON_S:
         pushing = start_s - TIME_EPSILON_S <= bench.time_s < start_s + PUSH_DURATION_S - TIME_EPSILON_S
         tick = bench.step(STILL, tuple(force) if pushing else NO_PUSH)
         fall_reflex |= tick.mode == nova_rt.MODE_FALLING
         max_tilt = max(max_tilt, bench.tilt_deg())
-        if bench.fallen():
+        impact_n = max(impact_n, bench.body_impact_n())
+        if not fell and bench.fallen():
             fell = True
-            break
-    return PushAttempt(float(np.linalg.norm(force)), fell, max_tilt, fall_reflex)
+            end_s = bench.time_s + FALL_SETTLE_S
+    return PushAttempt(float(np.linalg.norm(force)), fell, max_tilt, fall_reflex, impact_n / bench.weight_n)
 
 
 def exam_walk(
@@ -519,6 +528,7 @@ def describe(exam: ExamResult) -> str:
             f"{push.direction} {push.strongest_share:.0%}（{push.strongest_n:.0f} N）" for push in exam.pushes
         )
         lines.append(f"| 被推（扛得住体重的几成） | {held} |")
+        lines.append(f"| 被推倒时身上（脚以外）着地最重的一下（体重的几倍） | {describe_impacts(exam.pushes)} |")
     if exam.walk:
         lines.append(f"| 走 {WALK_DISTANCE_M / 1000:g} 公里 | {describe_walk(exam.walk)} |")
     if exam.stairs:
@@ -534,6 +544,14 @@ def describe(exam: ExamResult) -> str:
     if exam.walk:
         lines += ["", *walk_table(exam.walk)]
     return "\n".join(lines)
+
+
+def describe_impacts(pushes: list[PushResult]) -> str:
+    """每个方向推倒的那一档里，身上砸到地上最重的一下。没推倒的写 —。"""
+    impacts = [push.trials[-1].fall_impact_weights if push.trials else math.nan for push in pushes]
+    return "、".join(
+        f"{push.direction} {numbers([impact], '.1f')}" for push, impact in zip(pushes, impacts, strict=True)
+    )
 
 
 def describe_stand(stand: StandResult) -> str:
@@ -601,6 +619,22 @@ def walk_table(walk: WalkResult) -> list[str]:
     return lines
 
 
+# 结果里每道题存在哪一项。
+RESULT_KEYS = {"stand": "stand", "push": "pushes", "walk": "walk", "stairs": "stairs", "get_up": "get_up"}
+
+
+def merged(previous: Mapping, exam: ExamResult, items: Sequence[str]) -> dict:
+    """只考了几道题时，并进原来的结果：这几道换成新的，别的照旧（策略换了就不并）。"""
+    fresh = asdict(exam)
+    if previous.get("policy") != exam.policy:
+        return fresh
+    combined = dict(previous)
+    for item in items:
+        combined[RESULT_KEYS[item]] = fresh[RESULT_KEYS[item]]
+    combined["date"] = fresh["date"]
+    return combined
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("brain", help="策略的规约（contract.json）的路径，或者 sonic")
@@ -610,7 +644,10 @@ def main() -> None:
     exam = run_exam(arguments.brain, arguments.items, arguments.workers)
     output = result_dir(arguments.brain) / EXAM_RESULT_NAME
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(asdict(exam), ensure_ascii=False, indent=2), encoding="utf-8")
+    previous = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {}
+    output.write_text(
+        json.dumps(merged(previous, exam, arguments.items), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(describe(exam))
     print(f"写进了 {output}")
 

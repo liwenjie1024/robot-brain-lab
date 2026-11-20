@@ -36,6 +36,8 @@ FALLEN_HEIGHT_SHARE = 0.5
 UPRIGHT_HEIGHT_SHARE = 0.8
 UPRIGHT_TILT_DEG = 20.0
 STILL = {"lin_vel_x": 0.0, "lin_vel_y": 0.0, "ang_vel_z": 0.0}
+WORLD_BODY = 0
+SPATIAL_SIZE = 6
 
 
 class StartPose(StrEnum):
@@ -160,6 +162,19 @@ def lowest_point_m(model: mujoco.MjModel, data: mujoco.MjData) -> float:
     return lowest
 
 
+def feet_and_below(model: mujoco.MjModel, foot_bodies) -> frozenset[int]:
+    """脚和它下面的段（脚趾）在模型里的编号。不认识的身体没有脚（全身都算"身上"）。"""
+    feet = {mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name) for name in foot_bodies}
+    found = set()
+    for body in range(model.nbody):
+        ancestor = body
+        while ancestor > WORLD_BODY and ancestor not in feet:
+            ancestor = int(model.body_parentid[ancestor])
+        if ancestor in feet:
+            found.add(body)
+    return frozenset(found)
+
+
 def free_joint(model: mujoco.MjModel) -> int:
     return next(joint for joint in range(model.njnt) if model.jnt_type[joint] == mujoco.mjtJoint.mjJNT_FREE)
 
@@ -200,6 +215,7 @@ class PolicyBench:
         if trunk < 0:
             raise ValueError(f"身体的模型里没有推的地方 {info.trunk}")
         self.trunk = trunk
+        self._feet = feet_and_below(self.model, info.estimator.foot_bodies if info.estimator else ())
         self.timestep = float(self.model.opt.timestep)
         self.standing_height_m = self._standing_height()
         self.work_j = 0.0
@@ -255,6 +271,20 @@ class PolicyBench:
         if self.feel:
             return tilt_rad(self.feel.estimator.rotation)
         return math.radians(self.tilt_deg())
+
+    def body_impact_n(self) -> float:
+        """这一刻身上（脚以外）和地面（固定在世界上的形状）之间最大的一个法向接触力（N）。摔倒时护没护住自己看它。"""
+        worst, wrench = 0.0, np.zeros(SPATIAL_SIZE)
+        for index in range(self.data.ncon):
+            contact = self.data.contact[index]
+            first, second = self.model.geom_bodyid[contact.geom1], self.model.geom_bodyid[contact.geom2]
+            if (first == WORLD_BODY) == (second == WORLD_BODY) or (
+                second if first == WORLD_BODY else first
+            ) in self._feet:
+                continue
+            mujoco.mj_contactForce(self.model, self.data, index, wrench)
+            worst = max(worst, float(wrench[0]))
+        return worst
 
     def tilt_deg(self) -> float:
         up = self.data.xmat[self.root].reshape(3, 3)[:, 2]

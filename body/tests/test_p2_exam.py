@@ -31,6 +31,7 @@ from nova_body.p2_exam import (
     exam_walk,
     lap_distance_m,
     mean_errors,
+    merged,
     push_delays_s,
     push_trial,
     run_task,
@@ -283,3 +284,33 @@ def test_the_report_has_every_item_and_writes_a_dash_for_what_was_not_measured()
     assert "| 4% | 歪 3° | 倒了 4/4 |" in table
     assert "| 8% | 倒了 1/4 | — |" in table
     assert "平均机械功率 — W" in table
+
+
+def test_the_hardest_landing_of_a_fallen_level_is_kept():
+    """一档里倒了的几次，记身上砸到地上最重的那一下（体重的几倍）；都没倒是 nan。"""
+    attempts = [
+        PushAttempt(10.0, True, 70.0, True, 1.5),
+        PushAttempt(10.0, False, 12.0, False, 0.2),
+        PushAttempt(10.0, True, 65.0, True, 2.5),
+    ]
+    assert push_trial(0.3, attempts).fall_impact_weights == 2.5
+    assert math.isnan(push_trial(0.1, attempts[1:2]).fall_impact_weights)
+
+
+def test_a_partial_exam_is_merged_into_the_previous_results():
+    """只补考了被推：被推换成新的，别的照旧；换了一个策略就不并，整份换掉。"""
+    previous = {
+        "policy": "测试",
+        "date": "2026-11-19",
+        "stand": {"seconds": 3600.0},
+        "pushes": [],
+        "walk": None,
+        "stairs": [],
+        "get_up": [],
+    }
+    fresh = ExamResult(policy="测试", date="2026-11-21", pushes=[PushResult("往前", [], 0.0, 0.0)])
+    combined = merged(previous, fresh, ["push"])
+    assert combined["stand"] == {"seconds": 3600.0}
+    assert combined["pushes"][0]["direction"] == "往前"
+    assert combined["date"] == "2026-11-21"
+    assert merged({**previous, "policy": "别的"}, fresh, ["push"])["stand"] is None

@@ -163,10 +163,12 @@ def test_the_encoder_input_is_laid_out_like_the_observation_config():
 
 
 def test_sonic_stands_on_the_bench():
-    """真的在测试台上（G1、脊髓层、驱动器那一层）：SONIC 站 1 秒不倒，有了参考动作，骨盆几乎不歪。"""
+    """真的在测试台上（G1、脊髓层、驱动器那一层）：SONIC 站 1 秒不倒，有了参考动作，骨盆几乎不歪，
+    身上除了脚没有着地的地方。"""
     bench = PolicyBench(SonicBrain(), sensed=False)
     for _ in range(1000):
         bench.step(STILL)
     assert not bench.fallen()
     assert bench.runner.motion is not None
     assert bench.tilt_deg() < 5.0
+    assert bench.body_impact_n() == 0.0, "站着只有脚着地"

@@ -19,6 +19,7 @@ from nova_body.policy_bench import (
     PolicyBench,
     StartPose,
     default_positions,
+    feet_and_below,
     load_policy_body,
     lowest_point_m,
     start_data,
@@ -208,3 +209,20 @@ def test_the_ground_does_not_take_the_body_models_defaults():
         assert model.geom_condim[geom] == GROUND_CONDIM
     pelvis = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "pelvis")
     assert model.geom_group[pelvis] == 3
+
+
+def test_lying_on_the_floor_presses_the_body_into_it(policy):
+    """趴着落到地上：身上着地的力大过 0（测试用的小身体测试台不认识，没有"脚"，全身都算）；站着悬在半空时是 0。"""
+    lying = PolicyBench(policy, sensed=False, start=StartPose.PRONE)
+    assert lying.body_impact_n() == 0.0
+    for _ in range(300):
+        lying.step(STILL)
+    assert lying.body_impact_n() > 0.0
+
+
+def test_feet_and_what_hangs_below_them_are_not_the_body():
+    """脚（和脚下面的段）不算"身上"：小身体的腿当脚时，算出来的就是那条腿。"""
+    model = load_policy_body(load_policy(FIXTURE_DIR / "contract.json"))
+    leg = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "leg_a")
+    assert feet_and_below(model, ("leg_a",)) == frozenset({leg})
+    assert feet_and_below(model, ()) == frozenset()
