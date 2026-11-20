@@ -121,6 +121,10 @@ def one_file(**changes) -> list[dict]:
         ({"files": one_file(sha256="abc")}, "sha256 要是 64 位小写的十六进制"),
         ({"files": one_file(sha256=sha256(b"x").upper())}, "sha256 要是 64 位小写的十六进制"),
         ({"files": one_file() + one_file()}, "files 里有重复的路径"),
+        ({"files": one_file(path="assets/part.STL ")}, "文件的路径不对"),
+        ({"files": one_file(lfs="yes")}, "lfs 要是 true 或 false"),
+        ({"files": one_file(lfs=True)}, "要写 lfs_base_url"),
+        ({"lfs_base_url": "https://example.org/lfs/main/"}, "lfs_base_url 要是 https 的"),
     ],
     ids=[
         "许可证是空的",
@@ -148,6 +152,10 @@ def one_file(**changes) -> list[dict]:
         "指纹太短",
         "指纹是大写",
         "路径重复",
+        "路径的一段以空格结尾",
+        "lfs 不是真假值",
+        "有 lfs 却没有它的网址",
+        "lfs 的网址没有写死版本",
     ],
 )
 def test_rejects_a_bad_manifest(tmp_path, changes, message):
@@ -207,6 +215,28 @@ def test_fetch_downloads_every_file_to_its_place(tmp_path):
         assert (tmp_path / "toy" / path).read_bytes() == content
     assert server.requests == [(BASE_URL + path, len(content)) for path, content in CONTENTS.items()]
     assert problems(manifest, tmp_path) == []
+
+
+LFS_BASE_URL = f"https://example.org/lfs/{COMMIT}/toy/"
+
+
+def test_lfs_files_come_from_their_own_address_and_spaces_are_escaped(tmp_path):
+    """标了 lfs 的文件从 lfs_base_url 下，别的从 base_url 下；路径里的空格在网址里转义成 %20。"""
+    contents = {"LICENSE": b"BSD", "legal/Asset Licenses.txt": b"MIT", "meshes/part.STL": b"solid part"}
+    files = [
+        {"path": name, "bytes": len(content), "sha256": sha256(content)}
+        | ({"lfs": True} if name.endswith(".STL") else {})
+        for name, content in contents.items()
+    ]
+    manifest = load_manifest(write_manifest(tmp_path, manifest_data(files=files, lfs_base_url=LFS_BASE_URL)))
+    served = {
+        BASE_URL + "LICENSE": contents["LICENSE"],
+        BASE_URL + "legal/Asset%20Licenses.txt": contents["legal/Asset Licenses.txt"],
+        LFS_BASE_URL + "meshes/part.STL": contents["meshes/part.STL"],
+    }
+    fetched = fetch(manifest, tmp_path, lambda url, size: served[url])
+    assert sorted(fetched) == sorted(contents)
+    assert (tmp_path / "toy" / "legal" / "Asset Licenses.txt").read_bytes() == b"MIT"
 
 
 def test_fetch_again_downloads_nothing(tmp_path, toy):
@@ -401,12 +431,14 @@ def test_command_fails_clearly(tmp_path, monkeypatch, capsys):
 
 
 def test_every_real_manifest_is_valid_and_pinned():
-    """仓库里的清单都写对了，都写死在一个提交号上，都登记了许可证。"""
-    manifests = find_manifests(THIRD_PARTY_DIR)
-    assert [manifest.name for manifest in manifests] == ["unitree_g1"]
-    for manifest in manifests:
+    """仓库里的清单都写对了，都写死在一个提交号上，都登记了许可证、带着许可证的原文。"""
+    manifests = {manifest.name: manifest for manifest in find_manifests(THIRD_PARTY_DIR)}
+    assert sorted(manifests) == ["gear_sonic", "gr00t_wbc", "unitree_g1"]
+    assert manifests["unitree_g1"].license == "BSD-3-Clause"
+    assert manifests["gear_sonic"].license.startswith("NVIDIA Open Model License")
+    assert manifests["gr00t_wbc"].license.startswith("Apache-2.0")
+    for manifest in manifests.values():
         assert manifest.commit in manifest.base_url
-        assert manifest.license == "BSD-3-Clause"
         assert "LICENSE" in {file.path for file in manifest.files}
 
 

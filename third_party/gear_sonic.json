@@ -1,0 +1,51 @@
+{
+  "name": "gear_sonic",
+  "description": "NVIDIA 的 SONIC（GEAR-SONIC）默认的那一版：Unitree G1 的全身控制，运动规划器（planner_sonic.onnx）→ 编码器 → 解码器，每秒 50 次；还有观测的设置、训练时的设置（sonic_release/config.yaml）、许可证。基线的策略之一（P2 的 2.2 步）",
+  "source": "https://huggingface.co/nvidia/GEAR-SONIC",
+  "commit": "6733128a3d8a523b1418b06bca3cdf61c8b0987f",
+  "commit_date": "2026-08-26",
+  "license": "NVIDIA Open Model License（权重，能商用，要署名）；Apache-2.0（代码）",
+  "base_url": "https://huggingface.co/nvidia/GEAR-SONIC/resolve/6733128a3d8a523b1418b06bca3cdf61c8b0987f/",
+  "files": [
+    {
+      "path": "config.json",
+      "bytes": 2428,
+      "sha256": "326dcc509ad93509cf262871256a74f508f43a8430f61ec6abe8034e985ce948"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 8886,
+      "sha256": "24ab66be50d1aca4fc5e029ef76ce4ceaac6557ea21665caf4b140695a76ffee"
+    },
+    {
+      "path": "model_decoder.onnx",
+      "bytes": 40900688,
+      "sha256": "c7241a123eaa36b5d64bad19540efde93cac1ad443bd4572fd12ca99898118ed"
+    },
+    {
+      "path": "model_encoder.onnx",
+      "bytes": 50100513,
+      "sha256": "013ab0287236aa2721e13f1e936d699db982302d0de0bfcdae76d5c3245362d3"
+    },
+    {
+      "path": "observation_config.yaml",
+      "bytes": 2336,
+      "sha256": "466d05947c78af6c76388adfb86e3a2a77b2a1d921a64883ed3d085ebf58de1b"
+    },
+    {
+      "path": "planner_sonic.onnx",
+      "bytes": 773952989,
+      "sha256": "39b553e197f62f077975ba38512bc04781a3fc37c2af7c6756e04629f760edea"
+    },
+    {
+      "path": "README.md",
+      "bytes": 15942,
+      "sha256": "0a69d0a418fddc2d96e9a70244876c32d40a44bee2b20c70c21747807c2972fd"
+    },
+    {
+      "path": "sonic_release/config.yaml",
+      "bytes": 28331,
+      "sha256": "f08187795fa16a839a28bc1c18e0555d38d9420e03733744341cdcb56ab629c7"
+    }
+  ]
+}

@@ -429,6 +429,8 @@ AI 只用在**训练那一端**：
 | Eigen 3.4.0（C++ 的矩阵运算） | MPL-2.0（改了它自己的文件才要公开那些文件） | 可以 |
 | GoogleTest 1.16.0（C++ 的测试） | BSD-3 | 可以 |
 | nanobind 3.1.0、scikit-build-core 1.1.1、pathspec 1.1.1（把 C++ 编译成 Python 的模块） | BSD-3、Apache 2.0、MPL-2.0 | 可以 |
+| SONIC（GEAR-SONIC）默认的那一版的权重（规划器、编码器、解码器，2.2 步当基线；Hugging Face 的版本 `6733128a`，2026-08-26） | NVIDIA 开放模型许可（2026-11-20 看过 LICENSE 的原文：可以用、改、卖、分发，要写上 "Licensed by NVIDIA Corporation under the NVIDIA Open Model License"；绕过安全措施、告 NVIDIA 专利，许可就没了）；代码 Apache 2.0 | 可以，按它的条款，要署名。清单 `third_party/gear_sonic.json`。规划器被 Hugging Face 的扫描标成"可疑"：查过，三个 ONNX 都只有标准的算子、没有外部数据 |
+| GR00T-WholeBodyControl 里的 G1 模型（`g1_29dof.xml` 和网格）、SONIC 部署的源码（GitHub 的提交 `1e1ec4f5`，2026-11-03） | Apache 2.0（仓库的 LICENSE，代码和软件都是）；第三方的部分（宇树的 SDK 是 BSD-3 等）列在仓库的 legal/ 里 | 可以，要留着版权声明。只取了要用的 61 个文件，清单 `third_party/gr00t_wbc.json` |
 
 选模型和数据时，许可证和能力一起看。新加的东西先填这张表。考场和训练环境的素材也会进训练，一样要能商用（见 [Nova 考试](Nova考试.md) 2.6 节）。其它商用要求见 [商用要求](商用要求.md)。
 

@@ -1,6 +1,7 @@
-"""外面来的东西：现成的模型文件（现在只有基线的身体 Unitree G1）。按清单下载，每个文件都核对。
+"""外面来的东西：现成的模型文件（基线的身体 Unitree G1、基线的策略 SONIC）。按清单下载，每个文件都核对。
 
 清单（third_party/<名字>.json）是提交进仓库的：从哪来、哪个版本、什么许可证、每个文件多大、SHA-256 是多少。
+GitHub 上用 Git LFS 存的文件（网格、权重）不在 raw 的地址上，标上 "lfs": true，从 lfs_base_url 下。
 文件本身不提交，下载到 third_party/<名字>/ 里。用之前每次都核对，所以用到的一定是清单上的那一版。
 
 用法：python -m nova_body.third_party [--dir 目录]
@@ -13,6 +14,7 @@ import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,8 +33,8 @@ MAX_SHOWN_PROBLEMS = 3
 _NAME = re.compile(r"[a-z0-9_]+")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-# 文件的路径只能往清单自己的目录里面写：不能有 ..、不能从根开始、不能有反斜杠。
-_PATH_PART = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+# 文件的路径只能往清单自己的目录里面写：不能有 ..、不能从根开始、不能有反斜杠。中间可以有空格（许可证的文件名有）。
+_PATH_PART = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_ .-]*[A-Za-z0-9_.-])?")
 _TEXT_FIELDS = ("name", "description", "source", "commit", "commit_date", "license", "base_url")
 
 Download = Callable[[str, int], bytes]
@@ -48,11 +50,12 @@ class AssetError(RuntimeError):
 
 @dataclass(frozen=True)
 class AssetFile:
-    """清单里的一个文件：相对的路径（用 / 分开）、大小、SHA-256。"""
+    """清单里的一个文件：相对的路径（用 / 分开）、大小、SHA-256；lfs 是从 lfs_base_url 下。"""
 
     path: str
     size_bytes: int
     sha256: str
+    lfs: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,11 @@ class Manifest:
     license: str
     base_url: str
     files: tuple[AssetFile, ...]
+    lfs_base_url: str | None = None
+
+    def url_of(self, file: AssetFile) -> str:
+        base = self.lfs_base_url if file.lfs else self.base_url
+        return base + urllib.parse.quote(file.path)
 
     @property
     def total_bytes(self) -> int:
@@ -89,16 +97,26 @@ def load_manifest(path: Path) -> Manifest:
         raise ManifestError(f"{path.name}：name 要和文件名一样，只用小写字母、数字和下划线")
     if not _COMMIT.fullmatch(raw["commit"]):
         raise ManifestError(f"{path.name}：commit 要是 40 位的提交号")
-    base_url = raw["base_url"]
-    if not base_url.startswith("https://") or not base_url.endswith("/") or raw["commit"] not in base_url:
-        raise ManifestError(f"{path.name}：base_url 要是 https 的、以 / 结尾，而且写死在 commit 这个版本上")
+    for field in ("base_url", "lfs_base_url"):
+        url = raw.get(field)
+        if field == "lfs_base_url" and url is None:
+            continue
+        if (
+            not isinstance(url, str)
+            or not url.startswith("https://")
+            or not url.endswith("/")
+            or raw["commit"] not in url
+        ):
+            raise ManifestError(f"{path.name}：{field} 要是 https 的、以 / 结尾，而且写死在 commit 这个版本上")
     entries = raw.get("files")
     if not isinstance(entries, list) or not entries:
         raise ManifestError(f"{path.name}：files 要是一张不空的表")
     files = tuple(_asset_file(path.name, entry) for entry in entries)
     if len({file.path for file in files}) != len(files):
         raise ManifestError(f"{path.name}：files 里有重复的路径")
-    return Manifest(**{field: raw[field] for field in _TEXT_FIELDS}, files=files)
+    if any(file.lfs for file in files) and raw.get("lfs_base_url") is None:
+        raise ManifestError(f"{path.name}：有 lfs 的文件就要写 lfs_base_url")
+    return Manifest(**{field: raw[field] for field in _TEXT_FIELDS}, files=files, lfs_base_url=raw.get("lfs_base_url"))
 
 
 def find_manifests(directory: Path) -> list[Manifest]:
@@ -157,7 +175,7 @@ def fetch(manifest: Manifest, directory: Path, download: Download | None = None)
             and _sha256(target.read_bytes()) == file.sha256
         ):
             continue
-        content = download(manifest.base_url + file.path, file.size_bytes)
+        content = download(manifest.url_of(file), file.size_bytes)
         if len(content) != file.size_bytes or _sha256(content) != file.sha256:
             raise AssetError(f"{manifest.name}：下载到的 {file.path} 和清单不一样，没有保存")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -202,14 +220,16 @@ def main(argv: list[str] | None = None) -> int:
 def _asset_file(manifest_name: str, entry: object) -> AssetFile:
     if not isinstance(entry, dict):
         raise ManifestError(f"{manifest_name}：files 里每一项要是一个对象")
-    path, size, sha256 = entry.get("path"), entry.get("bytes"), entry.get("sha256")
+    path, size, sha256, lfs = entry.get("path"), entry.get("bytes"), entry.get("sha256"), entry.get("lfs", False)
     if not isinstance(path, str) or not all(_PATH_PART.fullmatch(part) for part in path.split("/")):
         raise ManifestError(f"{manifest_name}：文件的路径不对：{path!r}")
     if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
         raise ManifestError(f"{manifest_name}：{path} 的 bytes 要是正的整数")
     if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
         raise ManifestError(f"{manifest_name}：{path} 的 sha256 要是 64 位小写的十六进制")
-    return AssetFile(path, size, sha256)
+    if not isinstance(lfs, bool):
+        raise ManifestError(f"{manifest_name}：{path} 的 lfs 要是 true 或 false")
+    return AssetFile(path, size, sha256, lfs)
 
 
 def _sha256(content: bytes) -> str:

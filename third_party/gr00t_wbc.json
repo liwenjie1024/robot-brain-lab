@@ -1,0 +1,353 @@
+{
+  "name": "gr00t_wbc",
+  "description": "NVlabs 的 GR00T-WholeBodyControl 里 SONIC 部署要用的：G1（29 个自由度）的 MuJoCo 模型和它用到的网格、部署的 C++ 源码（测试台照着拼观测、喂规划器）、G1 的关节顺序和软硬、许可证。只取这些，不取整个仓库",
+  "source": "https://github.com/NVlabs/GR00T-WholeBodyControl",
+  "commit": "1e1ec4f5f27e6c3e03048f693bd7c60cce04afda",
+  "commit_date": "2026-11-03",
+  "license": "Apache-2.0（代码和模型文件）；NVIDIA Open Model License（权重，这里没有）",
+  "base_url": "https://raw.githubusercontent.com/NVlabs/GR00T-WholeBodyControl/1e1ec4f5f27e6c3e03048f693bd7c60cce04afda/",
+  "lfs_base_url": "https://media.githubusercontent.com/media/NVlabs/GR00T-WholeBodyControl/1e1ec4f5f27e6c3e03048f693bd7c60cce04afda/",
+  "files": [
+    {
+      "path": "gear_sonic/envs/manager_env/robots/g1.py",
+      "bytes": 9830,
+      "sha256": "42f9b4394eb21512735da4b1ca78c2d0546c4221c7bdaf8b3a186d8dc5588ba9"
+    },
+    {
+      "path": "gear_sonic/scripts/run_sim_loop.py",
+      "bytes": 2105,
+      "sha256": "6e79b61d43e94b81997a417f175971c3cb1d35bc2f361fb6d5f29ece27c3a40b"
+    },
+    {
+      "path": "gear_sonic/trl/utils/order_converter.py",
+      "bytes": 9330,
+      "sha256": "236e2705d306ab1c938af5baf973fbcd291b04fbdd372bc87e3fa56c907d069f"
+    },
+    {
+      "path": "gear_sonic_deploy/g1/g1_29dof.xml",
+      "bytes": 26111,
+      "sha256": "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532"
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/head_link.STL",
+      "bytes": 337584,
+      "sha256": "d297328b3569fc85074355e76cba6c889d19de5361224bcd3c5b8ce82e13b9b6",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_ankle_pitch_link.STL",
+      "bytes": 71184,
+      "sha256": "d49e3abc6f5b12e532062cd575b87b5ef40cd2a3fc18f54a1ca5bba4f773d51d",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_ankle_roll_link.STL",
+      "bytes": 653384,
+      "sha256": "c4092af943141d4d9f74232f3cfa345afc6565f46a077793b8ae0e68b39dc33f",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_elbow_link.STL",
+      "bytes": 88784,
+      "sha256": "fa752198accd104d5c4c3a01382e45165b944fbbc5acce085059223324e5bed3",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_hip_pitch_link.STL",
+      "bytes": 181684,
+      "sha256": "4725168105ee768ee31638ef22b53f6be2d7641bfd7cfefe803488d884776fa4",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_hip_roll_link.STL",
+      "bytes": 192184,
+      "sha256": "91f25922ee8a7c3152790051bebad17b4d9cd243569c38fe340285ff93a97acf",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_hip_yaw_link.STL",
+      "bytes": 296284,
+      "sha256": "a16d88aa6ddac8083aa7ad55ed317bea44b1fa003d314fba88965b7ed0f3b55b",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_knee_link.STL",
+      "bytes": 854884,
+      "sha256": "8d92b9e3d3a636761150bb8025e32514c4602b91c7028d523ee42b3e632de477",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_rubber_hand.STL",
+      "bytes": 2287484,
+      "sha256": "cff2221a690fa69303f61fce68f2d155c1517b52efb6ca9262dd56e0bc6e70fe",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_shoulder_pitch_link.STL",
+      "bytes": 176784,
+      "sha256": "f0d1cfd02fcf0d42f95e678eeca33da3afbcc366ffba5c052847773ec4f31d52",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_shoulder_roll_link.STL",
+      "bytes": 400284,
+      "sha256": "fb9df21687773522598dc384f1a2945c7519f11cbc8bd372a49170316d6eee88",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_shoulder_yaw_link.STL",
+      "bytes": 249184,
+      "sha256": "1aa97e9748e924336567992181f78c7cd0652fd52a4afcca3df6b2ef6f9e712e",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_wrist_pitch_link.STL",
+      "bytes": 85984,
+      "sha256": "b251d8e05047f695d0f536cd78c11973cfa4e78d08cfe82759336cc3471de3a9",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_wrist_roll_link.STL",
+      "bytes": 356184,
+      "sha256": "edc387c9a0ba8c2237e9b296d32531426fabeb6f53e58df45c76106bca74148c",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/left_wrist_yaw_link.STL",
+      "bytes": 318684,
+      "sha256": "83f8fb3a726bf9613d65dd14f0f447cb918c3c95b3938042a0c9c09749267d3b",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/logo_link.STL",
+      "bytes": 243384,
+      "sha256": "8571a0a19bc4916fa55f91449f51d5fdefd751000054865a842449429d5f155b",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/pelvis.STL",
+      "bytes": 1060884,
+      "sha256": "5ba6bbc888e630550140d3c26763f10206da8c8bd30ed886b8ede41c61f57a31",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/pelvis_contour_link.STL",
+      "bytes": 1805184,
+      "sha256": "5cc5c2c7a312329e3feeb2b03d3fc09fc29705bd01864f6767e51be959662420",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_ankle_pitch_link.STL",
+      "bytes": 71184,
+      "sha256": "15be426539ec1be70246d4d82a168806db64a41301af8b35c197a33348c787a9",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_ankle_roll_link.STL",
+      "bytes": 653784,
+      "sha256": "4b66222ea56653e627711b56d0a8949b4920da5df091da0ceb343f54e884e3a5",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_elbow_link.STL",
+      "bytes": 88784,
+      "sha256": "1be925d7aa268bb8fddf5362b9173066890c7d32092c05638608126e59d1e2ab",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_hip_pitch_link.STL",
+      "bytes": 181284,
+      "sha256": "e4f3c99d7f4a7d34eadbef9461fc66e3486cb5442db1ec50c86317d459f1a9c6",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_hip_roll_link.STL",
+      "bytes": 192684,
+      "sha256": "4c254ef66a356f492947f360dd931965477b631e3fcc841f91ccc46d945d54f6",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_hip_yaw_link.STL",
+      "bytes": 296284,
+      "sha256": "e479c2936ca2057e9eb2f7dff6c189b7419d7b8484dea0b298cbb36a2a6aa668",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_knee_link.STL",
+      "bytes": 852284,
+      "sha256": "63c4008449c9bbe701a6e2b557b7a252e90cf3a5abcf54cee46862b9a69f8ec8",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_rubber_hand.STL",
+      "bytes": 2192684,
+      "sha256": "99533b778bca6246144fa511bb9d4e555e075c641f2a0251e04372869cd99d67",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_shoulder_pitch_link.STL",
+      "bytes": 176784,
+      "sha256": "24cdb387e0128dfe602770a81c56cdce3a0181d34d039a11d1aaf8819b7b8c02",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_shoulder_roll_link.STL",
+      "bytes": 401884,
+      "sha256": "962b97c48f9ce9e8399f45dd9522e0865d19aa9fd299406b2d475a8fc4a53e81",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_shoulder_yaw_link.STL",
+      "bytes": 249984,
+      "sha256": "a0b76489271da0c72461a344c9ffb0f0c6e64f019ea5014c1624886c442a2fe5",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_wrist_pitch_link.STL",
+      "bytes": 79584,
+      "sha256": "d22f8f3b3127f15a63e5be1ee273cd5075786c3142f1c3d9f76cbf43d2a26477",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_wrist_roll_link.STL",
+      "bytes": 356084,
+      "sha256": "a7ee9212ff5b94d6cb7f52bb1bbf3f352194d5b598acff74f4c77d340c5b344f",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/right_wrist_yaw_link.STL",
+      "bytes": 341484,
+      "sha256": "bc9dece2d12509707e0057ba2e48df8f3d56db0c79410212963a25e8a50f61a6",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/torso_link.STL",
+      "bytes": 2232984,
+      "sha256": "e96d023f0368a4e3450b86ca5d4f10227d8141156a373e7da8cb3c93266523e0",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/waist_roll_link.STL",
+      "bytes": 24184,
+      "sha256": "34f0aa73f41131230be4d25876c944fdf6c24d62553f199ff8b980c15e8913df",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/waist_support_link.STL",
+      "bytes": 150484,
+      "sha256": "1fae9e1bb609848a1667d32eed8d6083ae443538a306843056a2a660f1b2926a",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/meshes/waist_yaw_link.STL",
+      "bytes": 336284,
+      "sha256": "2883f20e03f09b669b5b4ce10677ee6b5191c0934b584d7cbaef2d0662856ffb",
+      "lfs": true
+    },
+    {
+      "path": "gear_sonic_deploy/g1/scene_29dof.xml",
+      "bytes": 1031,
+      "sha256": "a857005b8dfda038705c9ffc14a4c8b6d7ea8cd2c06f88b7f884874533b7f5ae"
+    },
+    {
+      "path": "gear_sonic_deploy/policy/release/observation_config.yaml",
+      "bytes": 2336,
+      "sha256": "466d05947c78af6c76388adfb86e3a2a77b2a1d921a64883ed3d085ebf58de1b"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/control_policy.hpp",
+      "bytes": 15019,
+      "sha256": "b172519645540766b26903c75202ce074fdab3ec93e006b682ff1605508d5cfa"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/encoder.hpp",
+      "bytes": 14510,
+      "sha256": "0a541398b0e0e91e69f95de85fd8a141c3a7c46be8de8331440849bc85066f3b"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/fk.hpp",
+      "bytes": 1709,
+      "sha256": "ec500585ccfb84ec588191c1b6a975b5c3bade2afd85c095b25091ba073eeb36"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/localmotion_kplanner.hpp",
+      "bytes": 29239,
+      "sha256": "2cd8fcd975e01017f3b3d9a32a2d0e6abc9bf4bdf4a0a9503f9bf4a9f080b34b"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/localmotion_kplanner_onnx.hpp",
+      "bytes": 17201,
+      "sha256": "c9b70e04c6a1ddff3be83700342c48810b641907aa26847ec15bcc5034fcd9ba"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/math_utils.hpp",
+      "bytes": 18938,
+      "sha256": "7146af16966f64ec242b91398b1b12ad8d2e798d7d110872fe799dc397a5317c"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/motion_data_reader.hpp",
+      "bytes": 42901,
+      "sha256": "0fa19bc0fff66087e0eb47e41a8f0dbd0913fbb76e9409d4d57e84a04a7572b3"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/motor_gain_scaling.hpp",
+      "bytes": 649,
+      "sha256": "647cebb180b172720297d354408b7c37c3c7cf28280baa3151abcb47ffbcbade"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/observation_config.hpp",
+      "bytes": 21830,
+      "sha256": "8085f7dcdd0f265001ab18663ace0353e7f07bfa2fa5f6c005b9c0c8e9c5c9d6"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/policy_parameters.hpp",
+      "bytes": 11868,
+      "sha256": "b9332adf07c2c9b75c9b1e0756e57c7a1c2a890d8bb0aa53c3f1905fb739b791"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/robot_parameters.hpp",
+      "bytes": 4695,
+      "sha256": "073f8d04f292473851b6f0b923e6af7b2dc0686658eba19a8deab08c839e4fb1"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/utils.hpp",
+      "bytes": 8814,
+      "sha256": "bf35c0c3160bd9c8eea53e85ee1a9a64ebad689d8ece5c6b2e0da97905a6b39b"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/src/fk.cpp",
+      "bytes": 5230,
+      "sha256": "2b73b889888a470fa49c6b8bf9e4be880be4c6e7344b698042f473f308905d43"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/src/g1_deploy_onnx_ref.cpp",
+      "bytes": 230613,
+      "sha256": "ee8acf7e06881b95523c521da7f8683e55cbf28fb1bb656ca24fcd0ecebec649"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/src/motor_gain_scaling.cpp",
+      "bytes": 5649,
+      "sha256": "27dc15179fdf72d7cb1765961472b52f356ab586114259fcba58871c49495285"
+    },
+    {
+      "path": "legal/Apache License - GEAR-SONIC.txt",
+      "bytes": 5946,
+      "sha256": "4d42f1db12bb3b31150f735fdb3e18f40c7984f50f17bcad783e9bb5251e74b7"
+    },
+    {
+      "path": "legal/THIRD-PARTY SOFTWARE NOTICES - GEAR-SONIC.txt",
+      "bytes": 856,
+      "sha256": "f88d3638f4eee9e3f3e52c13eccca950755cbaaae4e9923a2d45435b2574d3be"
+    },
+    {
+      "path": "legal/THIRD-PARTY SOFTWARE NOTICES AND ASSET LICENSES - GEAR-SONIC.txt",
+      "bytes": 2786,
+      "sha256": "23fb2ecf02259d8fc78850e4f1466d44e01fbe514c5f2ffbab0578bd0054f0e0"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 8886,
+      "sha256": "24ab66be50d1aca4fc5e029ef76ce4ceaac6557ea21665caf4b140695a76ffee"
+    }
+  ]
+}
