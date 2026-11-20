@@ -1,10 +1,12 @@
 """从 mjlab 的训练环境写规约的测试：关节、观测、命令都照训练的设置写；写出来的规约合格；
 规约表达不了的（历史、剪裁、延迟、每一维不同的缩放、别的观测）导出时就拒绝；身体的模型写得出来、读得回来。"""
 
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import jsonschema
 import mujoco
 import pytest
 from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
@@ -12,6 +14,8 @@ from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
     ACTUATOR_7520_22,
     STIFFNESS_7520_22,
 )
+from mjlab.sensor import GridPatternCfg
+from nova_body.policy import POLICY_SCHEMA_PATH as POLICY_SCHEMA
 from nova_body.policy import check_contract
 
 from nova_train.contract import (
@@ -21,6 +25,7 @@ from nova_train.contract import (
     build_contract,
     command_section,
     export_body,
+    height_scan_spec,
     joints_section,
     observations_section,
 )
@@ -148,9 +153,9 @@ def test_observations_the_contract_cannot_express_are_refused(changes, message):
 
 
 def test_an_unknown_observation_is_refused():
-    """规约里没有的观测（脚下的高度）拒绝。"""
-    with pytest.raises(ExportError, match="没有观测 height_scan"):
-        _contract_term("height_scan", term_cfg(builtin_sensor))
+    """规约里没有的观测（脚离地多高）拒绝。"""
+    with pytest.raises(ExportError, match="没有观测 foot_height"):
+        _contract_term("foot_height", term_cfg(builtin_sensor))
 
 
 def test_an_observation_computed_another_way_is_refused():
@@ -174,3 +179,83 @@ def test_a_per_dimension_scale_is_refused():
     """每一维不同的缩放，这一版的规约表达不了，拒绝。"""
     with pytest.raises(ExportError, match="每一维的缩放不一样"):
         _scalar_scale("base_lin_vel", (1.0, 2.0, 3.0))
+
+
+def height_scan():
+    """名字和 mjlab 的函数一样的假函数。"""
+
+
+SCAN_MODEL_XML = (
+    '<mujoco><worldbody><body name="robot/pelvis"><freejoint/><geom size="0.1"/></body></worldbody></mujoco>'
+)
+
+
+def raycast(**changes):
+    """mjlab 练楼梯时的那个射线传感器的设置（骨盆下面 1.6 m x 1.0 m，每 10 cm 一点），可以改几样。"""
+    values = {
+        "frame": SimpleNamespace(type="body", name="pelvis", entity="robot"),
+        "pattern": GridPatternCfg(size=(1.6, 1.0), resolution=0.1),
+        "ray_alignment": "yaw",
+        "max_distance": 5.0,
+        "exclude_parent_body": True,
+        "include_geom_groups": (0,),
+    }
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
+def scan_term(**params):
+    return term_cfg(height_scan, params={"sensor_name": "terrain_scan", **params})
+
+
+def test_a_height_scan_is_written_the_way_mjlab_casts_it():
+    """mjlab 的高度扫描照它的设置写进规约：从骨盆、只跟着转偏航、网格多大多密、最远 5 m、只打第 0 组；
+    写出来的合规约的格式。"""
+    model = mujoco.MjModel.from_xml_string(SCAN_MODEL_XML)
+    scan = height_scan_spec(scan_term(), raycast(), model)
+    assert scan == {
+        "frame_body": "pelvis",
+        "alignment": "yaw",
+        "size_m": [1.6, 1.0],
+        "resolution_m": [0.1, 0.1],
+        "offset_m": [0.0, 0.0],
+        "max_distance_m": 5.0,
+        "geom_groups": [0],
+    }
+    schema = json.loads(POLICY_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.validate(scan, {"$defs": schema["$defs"], **schema["properties"]["height_scan"]})
+    assert _contract_term("height_scan", scan_term()) == "height_scan"
+
+
+@pytest.mark.parametrize(
+    ("term_params", "changes", "message"),
+    [
+        ({"offset": 0.5}, {}, "减了一个常数"),
+        ({"miss_value": 1.0}, {}, "打不到的射线"),
+        ({}, {"ray_alignment": "base"}, "偏航"),
+        ({}, {"pattern": GridPatternCfg(direction=(1.0, 0.0, 0.0))}, "竖直朝下"),
+        ({}, {"pattern": SimpleNamespace(direction=(0.0, 0.0, -1.0))}, "竖直朝下"),
+        ({}, {"frame": (SimpleNamespace(type="body", name="pelvis", entity="robot"),)}, "一个身体"),
+        ({}, {"frame": SimpleNamespace(type="site", name="imu", entity="robot")}, "一个身体"),
+        ({}, {"exclude_parent_body": False}, "不打它出发的"),
+        ({}, {"include_geom_groups": None}, "哪几组"),
+        ({}, {"frame": SimpleNamespace(type="body", name="torso", entity="robot")}, "没有高度扫描的身体"),
+    ],
+    ids=[
+        "减常数",
+        "打不到另算",
+        "跟着全身转",
+        "不朝下",
+        "不是网格",
+        "几个身体",
+        "从一个点",
+        "打自己",
+        "不说组",
+        "没有这个身体",
+    ],
+)
+def test_height_scans_the_contract_cannot_express_are_refused(term_params, changes, message):
+    """规约表达不了的高度扫描，导出时就拒绝。"""
+    model = mujoco.MjModel.from_xml_string(SCAN_MODEL_XML)
+    with pytest.raises(ExportError, match=message):
+        height_scan_spec(scan_term(**term_params), raycast(**changes), model)

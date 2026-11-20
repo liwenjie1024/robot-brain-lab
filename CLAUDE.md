@@ -50,6 +50,7 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  policy_bodies（练的时候的身体：推哪里、状态估计用哪个 IMU、哪两只脚）
                  policy_bench（测试台上跑一个策略：小脑层 → 脊髓层 → 驱动器 → 仿真，状态估计跟着；站着、躺着开始；楼梯）
                  policy_walk（按命令表考走路的策略） p2_exam（P2 的考试：站 1 小时、被推、走 1 公里、上下楼梯、起来）
+                 height_scan（高度扫描：从骨盆往下打一片竖直的射线，和 mjlab 一样）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
                  live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
                  channel（给每个网页发东西的队列）
@@ -63,6 +64,7 @@ rt/             实时分区（C++20，Eigen）：现在是脊髓层（第一版
 train/          训练：在显卡上做强化学习（容器 nova-train）。mjlab、MuJoCo Warp、PyTorch，版本锁在 uv.lock
                  nova_train: gpu（显卡能不能用） train（mjlab 的训练，关掉预料之中的提醒） contract（写策略的规约）
                  export_policy（导出给测试台） nova_warp（Nova 在显卡上的仿真） fixtures（测试用的小策略）
+                 tasks（我们自己的训练任务，名字以 Nova- 开头：G1 练楼梯）
 results/        训练的记录、练出来的策略、考的结果（不提交）
 view/            网页：Vue 3 + TypeScript + Naive UI + three.js，直接在这台电脑上跑（Node.js，端口 5280）
                  sim/（连接 link、检查 contracts、网格 meshes、画面上的数多久换 display、算出来的 derive、总的 useSim）
@@ -93,6 +95,8 @@ docker compose build body                                      # 改了 rt/ 里�
 docker compose run --rm train                                  # 训练的容器：看显卡能不能用（要显卡）
 docker compose run --rm train pytest                           # 训练这边的测试
 docker compose run --rm train python -m nova_train.train <任务> ... # 训练，参数和 mjlab 的 train 一样（见 train/README.md）
+docker compose run -d --name nova-train-<名字> train python -m nova_train.train <任务> ...  # 要练几个小时的：容器自己跑
+docker logs -f nova-train-<名字>                               # 看它练到哪了（练完 docker rm nova-train-<名字>）
 docker compose run --rm train python -m nova_train.export_policy <任务> <那次训练的目录> --name <名字> --body <身体>  # 交给测试台
 docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json  # 在测试台上考走路
 docker compose run --rm body python -m nova_body.p2_exam /results/policies/<名字>/contract.json  # P2 的考试（几个进程一起考，约 15 分钟）
@@ -135,7 +139,10 @@ docker compose run --rm train-lock                             # 改了 train/py
   - 在 Git Bash 里给容器传 `/results/...` 这样的路径要加 `MSYS_NO_PATHCONV=1`，不然会变成 Windows 的路径（训练的记录写进过 `train/E:/...`）。PowerShell 里不用。
   - **只认测试台的分数**：练完用 `export_policy` 导出（ONNX、练的时候的身体模型、规约），在测试台上考（`policy_walk`、`p2_exam`）。导出时比一比 ONNX 和 PyTorch 的动作，对不上就不交。
   - 策略的规约只写在 `contracts/policy`：训练那边写，测试台读，两边都照 JSON Schema 检查。规约表达不了的（观测的历史、剪裁、延迟、每一维的缩放）导出时就拒绝；测试台的 `PolicyRunner` 对不上（关节、驱动器、IMU 的点、步长凑不成策略的周期）就拒绝；命令超出练过的范围拒绝，不剪。规约里哪个数的意思变了，`contract_version` 加一。
-  - 身体那边测试用的小策略（`body/tests/fixtures/policy`）是 `nova_train.fixtures` 做的（身体的容器里没有做 ONNX 的库），训练这边的测试核对提交的和做出来的一个字节都不差；改了要重新做、一起提交。
+  - 要练几个小时的训练用 `docker compose run -d --name …` 让容器自己跑：跟着会话的后台命令，会话结束时会被一起停掉（2026-11-20 练楼梯练到第 111 轮就停了）。练到一半停了可以接着练（`--agent.resume True --agent.load-run …`），但命令、地形"由易到难"的计数会从头算，练得不多时不如重新练。
+  - 楼梯的任务（`nova_train/tasks.py`）照 mjlab 的 G1 不平地的任务，只换地形（楼梯到 20 cm、踏面 22 cm 和 30 cm、高低不平的方块地面）和凸形状的迭代（50 次）：mjlab 的 500 次时，这块 8 GB 的显卡放不下碰撞的缓冲（4096 个仿真光一块就要 2.9 GB）。地形都用方块，因为 G1 碰撞的形状只有球和胶囊，它们和方块之间有现成的算法，用不到那些迭代（高度场才用得到）。4096 个仿真时显卡要用到约 6.2 GB，一轮约 3.6 秒。
+  - 高度扫描（`height_scan.py`、规约的 `height_scan`）照 mjlab 的打法：从骨盆那一点出发、网格只跟着转偏航、射线竖直朝下、先 y 后 x 地排、只打给定的几组形状（地面在第 0 组，mjlab 的 G1 的形状在第 2、3 组）、骨盆自己不打、打不到就当最远的距离。测试台现在用仿真里的真数（以后换成深度相机算的，2.5 步）。规约表达不了的打法（跟着全身转、减常数、打不到另算）导出时就拒绝。
+  - 身体那边测试用的小策略（`body/tests/fixtures/policy`，看脚下高度的 `policy_scan`）是 `nova_train.fixtures` 做的（身体的容器里没有做 ONNX 的库），训练这边的测试核对提交的和做出来的一个字节都不差；改了要重新做、一起提交。
   - 量显卡上的显存用 Warp 自己记的（`wp.get_mempool_used_mem_current`）：Warp 会留着用过的显存，"显卡还剩多少"量不准（量出过负数）。
   - mjlab 自带的 G1 和测试台的 G1（Menagerie 的 `g1.xml`）不一样：碰撞的形状、关节的摩擦、转子惯量、软硬都不一样。策略是在哪个身体上练的，规约里写着（`body`），测试台（`policy_bench`）用那一个。
 - **身体的传感器读到的不是理想的数**（1.6 步，`sensing.py`）：IMU、六轴力、接触力都加上噪声（按数据手册的噪声密度）、零偏（每一回随机取一次）、延迟（IMU 2 毫秒、六轴力 1 毫秒、接触力 2 毫秒）。实时的仿真每一步读一次，网页上"感觉"那一块给的是它们；测试按传感器的精度比（零偏 + 几倍的噪声），不按理想的数比。测试台自己量的（地面托着多少、压力中心）还是仿真里的真数。
@@ -161,6 +168,7 @@ docker compose run --rm train-lock                             # 改了 train/py
 - **测试台和身体分开**（`bench.py`、`body.py`，为什么这样做）：Nova 和基线要比，结果只能差在身体上。
   - 地面、步长、积分的方法、关节位置控制的软硬、站姿的算法、合格线，对每个身体都一样，只写在测试台这一处。
     新的身体（比如 NVIDIA 的参考人形机器人）交出一个 `Body` 就行；测试台、站姿、画图的代码不许认身体是哪一个。
+  - 测试台的地面、楼梯（`bench.ground_settings`）的组、摩擦、软硬都写死成 MuJoCo 的默认值：加进身体的模型时不写的会跟着那个模型的默认值走（看脚下高度的小身体说"形状都在第 3 组"，地面也跟进了第 3 组，射线就打不到了）。G1、Nova 原来就是默认值，以前的结果不变。
   - 和地面的摩擦、软硬由地面定：地面的优先级（`priority`）比任何身体的形状都高。现成的模型会给自己的脚写摩擦和优先级。
   - 站姿按动作写（膝弯、脚尖向上、髋向前抬）。每个身体的关节往哪边算正不一样（G1 的髋和踝跟 Nova 是反的），
     所以先看转轴朝哪边，再定正负；不要直接往 qpos 里写带正负号的角度。

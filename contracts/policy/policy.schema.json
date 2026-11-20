@@ -141,9 +141,63 @@
           }
         }
       }
+    },
+    "height_scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_body", "alignment", "size_m", "resolution_m", "offset_m", "max_distance_m", "geom_groups"],
+      "description": "observations 里有 height_scan 时才有（有它就要有那一项）。从 frame_body 那一点往下打一片竖直的射线：网格只跟着它转偏航（alignment 是 yaw），x × y，每 resolution 一个点、两头都有，先 y 后 x 地排；只打固定在世界上、在 geom_groups 里的形状，frame_body 自己不打。每个点的值是 frame_body 比打到的点高多少（m），打不到或者比 max_distance_m 远就是 max_distance_m",
+      "properties": {
+        "frame_body": {
+          "type": "string",
+          "description": "射线从这个身体（body）的原点出发，比如 pelvis"
+        },
+        "alignment": {
+          "const": "yaw",
+          "description": "网格怎么跟着身体转：只跟着转偏航（不跟着前后、左右歪），射线一直竖直朝下"
+        },
+        "size_m": {
+          "$ref": "#/$defs/PlaneSize"
+        },
+        "resolution_m": {
+          "$ref": "#/$defs/PlaneStep"
+        },
+        "offset_m": {
+          "type": "array",
+          "prefixItems": [{ "type": "number" }, { "type": "number" }],
+          "items": false,
+          "minItems": 2,
+          "description": "网格的中心在偏航坐标里挪多少（往前、往左，m）"
+        },
+        "max_distance_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "geom_groups": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "description": "只打这几组形状（MuJoCo 的 geom group）：地面在这几组，身体自己的形状在别的组"
+        }
+      }
     }
   },
   "$defs": {
+    "PlaneSize": {
+      "type": "array",
+      "prefixItems": [{ "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 }],
+      "items": false,
+      "minItems": 2,
+      "description": "网格多大：往前、往左（m）"
+    },
+    "PlaneStep": {
+      "type": "array",
+      "prefixItems": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "number", "exclusiveMinimum": 0 }],
+      "items": false,
+      "minItems": 2,
+      "description": "每隔多远一个点：往前、往左（m）"
+    },
     "Sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
@@ -199,8 +253,8 @@
       "required": ["term", "size", "scale"],
       "properties": {
         "term": {
-          "enum": ["base_lin_vel", "base_ang_vel", "projected_gravity", "joint_pos", "joint_vel", "last_action", "command"],
-          "description": "base_lin_vel、base_ang_vel：IMU 那一点的速度、角速度（在 IMU 的坐标里，m/s、rad/s）。projected_gravity：重力的方向（单位向量，在骨盆的坐标里）。joint_pos：关节角度减默认的姿势（rad）。joint_vel：关节的转速（rad/s）。last_action：上一次的动作。command：命令"
+          "enum": ["base_lin_vel", "base_ang_vel", "projected_gravity", "joint_pos", "joint_vel", "last_action", "command", "height_scan"],
+          "description": "base_lin_vel、base_ang_vel：IMU 那一点的速度、角速度（在 IMU 的坐标里，m/s、rad/s）。projected_gravity：重力的方向（单位向量，在骨盆的坐标里）。joint_pos：关节角度减默认的姿势（rad）。joint_vel：关节的转速（rad/s）。last_action：上一次的动作。command：命令。height_scan：脚下的高度（m，怎么量写在 height_scan 里）"
         },
         "size": {
           "type": "integer",

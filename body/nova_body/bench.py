@@ -23,7 +23,14 @@ FLOOR_PRIORITY = 10
 FLOOR_RGBA = (0.90, 0.90, 0.88, 1.0)
 STAIR_RGBA = (0.78, 0.72, 0.62, 1.0)
 SLIPPERY_RGBA = (0.55, 0.70, 0.85, 1.0)
-# 滑的那一级的摩擦（湿的瓷砖大约 0.3）；后两个（转动、滚动的摩擦）用 MuJoCo 默认的。别的地方都是默认的 1。
+# 地面（平地、楼梯）的其余几样都写死成 MuJoCo 的默认值：加进身体的模型时，不写的会跟着那个模型的默认值走
+# （比如模型说"形状都在第 3 组"，地面也进了第 3 组），同一块地面对每个身体就不一样了。
+# 地面在第 0 组：高度扫描只打这一组（身体自己的形状在别的组）。
+GROUND_GROUP = 0
+GROUND_FRICTION = (1.0, 0.005, 0.0001)
+GROUND_CONDIM = 3
+GROUND_SOLIMP = (0.9, 0.95, 0.001, 0.5, 2.0)
+# 滑的那一级的摩擦（湿的瓷砖大约 0.3）；后两个（转动、滚动的摩擦）和别的地方一样。
 SLIPPERY_FRICTION = (0.3, 0.005, 0.0001)
 
 # 关节的位置控制：偏了这么多弧度，驱动器就出全力；阻尼 = 刚度 x 这个时间。
@@ -42,17 +49,28 @@ def use_bench_settings(spec: mujoco.MjSpec) -> None:
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
 
 
+def ground_settings(rgba: tuple[float, ...], friction: tuple[float, float, float] = GROUND_FRICTION) -> dict:
+    """地面（平地、楼梯的每一级）的形状：只被身体碰，接触由它说了算，别的都写死（不跟着身体模型的默认值走）。"""
+    return {
+        "contype": 0,
+        "conaffinity": 1,
+        "priority": FLOOR_PRIORITY,
+        "group": GROUND_GROUP,
+        "friction": list(friction),
+        "condim": GROUND_CONDIM,
+        "solref": list(CONTACT_SOLREF),
+        "solimp": list(GROUND_SOLIMP),
+        "margin": 0.0,
+        "gap": 0.0,
+        "solmix": 1.0,
+        "rgba": list(rgba),
+    }
+
+
 def add_floor(spec: mujoco.MjSpec) -> None:
     """加上测试台的地面：一块平地。以后换成考场。"""
     spec.worldbody.add_geom(
-        name=FLOOR,
-        type=mujoco.mjtGeom.mjGEOM_PLANE,
-        size=[0.0, 0.0, 1.0],
-        contype=0,
-        conaffinity=1,
-        priority=FLOOR_PRIORITY,
-        solref=list(CONTACT_SOLREF),
-        rgba=list(FLOOR_RGBA),
+        name=FLOOR, type=mujoco.mjtGeom.mjGEOM_PLANE, size=[0.0, 0.0, 1.0], **ground_settings(FLOOR_RGBA)
     )
 
 
@@ -112,19 +130,14 @@ def add_stairs(spec: mujoco.MjSpec, stairs: Stairs) -> None:
     for index, (begin, end, level) in enumerate(stairs.boxes()):
         height = level * stairs.rise_m
         slippery = level in stairs.slippery_levels
-        geom = spec.worldbody.add_geom(
+        settings = ground_settings(SLIPPERY_RGBA, SLIPPERY_FRICTION) if slippery else ground_settings(STAIR_RGBA)
+        spec.worldbody.add_geom(
             name=f"stair_{index}",
             type=mujoco.mjtGeom.mjGEOM_BOX,
             size=[(end - begin) / 2, stairs.width_m / 2, height / 2],
             pos=[(begin + end) / 2, 0.0, height / 2],
-            contype=0,
-            conaffinity=1,
-            priority=FLOOR_PRIORITY,
-            solref=list(CONTACT_SOLREF),
-            rgba=list(SLIPPERY_RGBA if slippery else STAIR_RGBA),
+            **settings,
         )
-        if slippery:
-            geom.friction = list(SLIPPERY_FRICTION)
 
 
 def stiffness_for(peak_torque_nm: float) -> float:

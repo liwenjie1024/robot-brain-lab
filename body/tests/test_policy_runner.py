@@ -12,7 +12,9 @@ import mujoco
 import numpy as np
 import pytest
 
+from nova_body.bench import Stairs
 from nova_body.policy import PolicyError, load_policy
+from nova_body.policy_bench import load_policy_body
 from nova_body.policy_runner import BodySense, PolicyRunner, bind_joints, steps_per_action
 from nova_body.spine import JointCommand, spine_for
 
@@ -266,3 +268,38 @@ def test_the_action_follows_the_sensed_gravity(policy):
     sense = BodySense(np.zeros(3), np.zeros(3), np.array([0.1, 0.0, -0.995]))
     runner.step(data, STILL, sense)
     assert runner.last_action[0] == pytest.approx(0.1, abs=1e-6)
+
+
+SCAN_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "policy_scan"
+# 看脚下高度的小策略：观测的高度扫描乘 1 / 5 m。
+SCAN_SCALE = 0.2
+
+
+def scan_runner(stairs: Stairs | None = None):
+    """看脚下高度的小策略放上测试台（地面在第 0 组，身体的形状在第 3 组）。"""
+    policy = load_policy(SCAN_FIXTURE_DIR / "contract.json")
+    model = load_policy_body(policy, stairs)
+    runner = PolicyRunner(model, policy, spine_for(model))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return policy, runner, data
+
+
+def test_the_height_scan_reads_how_high_the_pelvis_is_above_the_floor():
+    """平地上：3 x 3 个点都读骨盆离地多高（0.4 m），乘 1/5 m 是 0.08，放在观测的最后；身体自己的腿不挡。"""
+    policy, runner, data = scan_runner()
+    observation = runner.observation(data, policy.command.vector(STILL))
+    pelvis_height = float(data.xpos[1][2])
+    np.testing.assert_allclose(segment(policy, observation, "height_scan"), pelvis_height * SCAN_SCALE, atol=1e-9)
+    assert observation.size == policy.observation_size
+
+
+def test_the_height_scan_sees_a_step_in_front_in_grid_order():
+    """骨盆前面 5 cm 起有一级 10 cm 高的台阶：网格上往前那一列（x = 0.1 m）读 0.3 m，别的读 0.4 m；先 y 后 x 地排。
+    策略的两个动作就是第一个点和正中间的点（都在地面上）。"""
+    step = Stairs(start_x=0.05, rise_m=0.1, tread_m=0.3, steps=1, landing_m=0.5, width_m=2.0)
+    policy, runner, data = scan_runner(step)
+    scan = segment(policy, runner.observation(data, policy.command.vector(STILL)), "height_scan") / SCAN_SCALE
+    np.testing.assert_allclose(scan, [0.4, 0.4, 0.3] * 3, atol=1e-9)
+    runner.step(data, STILL)
+    np.testing.assert_allclose(runner.last_action, [0.4 * SCAN_SCALE, 0.4 * SCAN_SCALE], atol=1e-6)

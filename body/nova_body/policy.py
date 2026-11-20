@@ -16,6 +16,8 @@ import jsonschema
 import numpy as np
 import onnxruntime
 
+from nova_body.height_scan import HeightScanSpec
+
 CONTRACTS_DIR = Path(os.environ.get("NOVA_CONTRACTS_DIR", "/contracts"))
 POLICY_SCHEMA_PATH = CONTRACTS_DIR / "policy" / "policy.schema.json"
 CONTRACT_VERSION = 1
@@ -40,6 +42,7 @@ class ObservationTerm(StrEnum):
     JOINT_VEL = "joint_vel"
     LAST_ACTION = "last_action"
     COMMAND = "command"
+    HEIGHT_SCAN = "height_scan"
 
 
 VECTOR_TERMS = frozenset(
@@ -105,6 +108,8 @@ class Policy:
     joints: tuple[PolicyJoint, ...]
     observations: tuple[Observation, ...]
     command: CommandSpec
+    # 看脚下的高度时射线怎么打；不看是 None。
+    height_scan: HeightScanSpec | None
     input_name: str
     output_name: str
     session: onnxruntime.InferenceSession = field(repr=False)
@@ -142,7 +147,8 @@ def load_policy(contract_path: Path, schema_path: Path = POLICY_SCHEMA_PATH) -> 
         fields=tuple(contract["command"]["fields"]),
         ranges={name: (low, high) for name, (low, high) in contract["command"]["ranges"].items()},
     )
-    check_consistency(joints, observations, command)
+    height_scan = height_scan_spec(contract.get("height_scan"))
+    check_consistency(joints, observations, command, height_scan)
     session = open_session(onnx_path)
     observation_size = sum(observation.size for observation in observations)
     check_session(session, contract["onnx"]["input"], contract["onnx"]["output"], observation_size, len(joints))
@@ -157,6 +163,7 @@ def load_policy(contract_path: Path, schema_path: Path = POLICY_SCHEMA_PATH) -> 
         joints=joints,
         observations=observations,
         command=command,
+        height_scan=height_scan,
         input_name=contract["onnx"]["input"],
         output_name=contract["onnx"]["output"],
         session=session,
@@ -201,10 +208,31 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def height_scan_spec(section: Mapping[str, Any] | None) -> HeightScanSpec | None:
+    """规约里的 height_scan（已经照 JSON Schema 检查过）。"""
+    if section is None:
+        return None
+    try:
+        return HeightScanSpec(
+            frame_body=section["frame_body"],
+            size_m=tuple(section["size_m"]),
+            resolution_m=tuple(section["resolution_m"]),
+            offset_m=tuple(section["offset_m"]),
+            max_distance_m=float(section["max_distance_m"]),
+            geom_groups=tuple(section["geom_groups"]),
+        )
+    except ValueError as error:
+        raise PolicyError(f"高度扫描的设置不对：{error}") from error
+
+
 def check_consistency(
-    joints: tuple[PolicyJoint, ...], observations: tuple[Observation, ...], command: CommandSpec
+    joints: tuple[PolicyJoint, ...],
+    observations: tuple[Observation, ...],
+    command: CommandSpec,
+    height_scan: HeightScanSpec | None = None,
 ) -> None:
-    """规约自己内部对得上：每一项观测的长度、关节不重名、命令的范围一项不少。"""
+    """规约自己内部对得上：每一项观测的长度、关节不重名、命令的范围一项不少；看脚下的高度就要说清楚怎么量，
+    说了怎么量就要看。"""
     names = [joint.name for joint in joints]
     repeated = sorted({name for name in names if names.count(name) > 1})
     if repeated:
@@ -213,8 +241,12 @@ def check_consistency(
     repeated_terms = sorted({term.value for term in terms if terms.count(term) > 1})
     if repeated_terms:
         raise PolicyError(f"观测里有重复的项：{'、'.join(repeated_terms)}")
+    scans = ObservationTerm.HEIGHT_SCAN in terms
+    if scans != (height_scan is not None):
+        raise PolicyError("观测里有 height_scan 就要有 height_scan 的设置，有设置就要有那一项观测")
+    scan_size = height_scan.size if height_scan else 0
     for observation in observations:
-        expected = expected_size(observation.term, len(joints), len(command.fields))
+        expected = expected_size(observation.term, len(joints), len(command.fields), scan_size)
         if observation.size != expected:
             raise PolicyError(f"观测 {observation.term.value} 的长度是 {observation.size}，应该是 {expected}")
     if set(command.ranges) != set(command.fields):
@@ -226,11 +258,13 @@ def check_consistency(
             raise PolicyError(f"命令 {name} 的范围反了：[{low:g}, {high:g}]")
 
 
-def expected_size(term: ObservationTerm, joint_count: int, command_count: int) -> int:
+def expected_size(term: ObservationTerm, joint_count: int, command_count: int, scan_size: int = 0) -> int:
     if term in VECTOR_TERMS:
         return VECTOR_SIZE
     if term in JOINT_TERMS:
         return joint_count
+    if term == ObservationTerm.HEIGHT_SCAN:
+        return scan_size
     return command_count
 
 

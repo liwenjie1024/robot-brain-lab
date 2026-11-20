@@ -1,0 +1,126 @@
+{
+  "contract_version": 1,
+  "name": "fixture-scan",
+  "body": {
+    "name": "fixture",
+    "model": "body.xml",
+    "sha256": "527f6e11ada95e1a456367011d1800932fabc7bcf8597c9c6fd26abffd40c029"
+  },
+  "trained": {
+    "tool": "nova_train.fixtures",
+    "version": "1",
+    "source": "train/nova_train/fixtures.py",
+    "task": "测试用：从观测里挑出高度扫描的两个点",
+    "iterations": 0,
+    "date": "2026-11-18"
+  },
+  "onnx": {
+    "file": "policy.onnx",
+    "sha256": "7ecf999a62e6300fa445b8cbb9e7ea69baaf1f27865536d4997e4ee878b2a599",
+    "input": "obs",
+    "output": "actions"
+  },
+  "rate_hz": 50.0,
+  "imu_site": "imu",
+  "joints": [
+    {
+      "name": "joint_a",
+      "default_position_rad": 0.1,
+      "action_scale_rad": 0.5,
+      "stiffness_nm_per_rad": 20.0,
+      "damping_nms_per_rad": 1.0,
+      "torque_limit_nm": 5.0
+    },
+    {
+      "name": "joint_b",
+      "default_position_rad": -0.2,
+      "action_scale_rad": 0.25,
+      "stiffness_nm_per_rad": 30.0,
+      "damping_nms_per_rad": 2.0,
+      "torque_limit_nm": 8.0
+    }
+  ],
+  "observations": [
+    {
+      "term": "base_lin_vel",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "base_ang_vel",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "projected_gravity",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "joint_pos",
+      "size": 2,
+      "scale": 1.0
+    },
+    {
+      "term": "joint_vel",
+      "size": 2,
+      "scale": 1.0
+    },
+    {
+      "term": "last_action",
+      "size": 2,
+      "scale": 1.0
+    },
+    {
+      "term": "command",
+      "size": 3,
+      "scale": 1.0
+    },
+    {
+      "term": "height_scan",
+      "size": 9,
+      "scale": 0.2
+    }
+  ],
+  "command": {
+    "fields": [
+      "lin_vel_x",
+      "lin_vel_y",
+      "ang_vel_z"
+    ],
+    "ranges": {
+      "lin_vel_x": [
+        -1.0,
+        1.0
+      ],
+      "lin_vel_y": [
+        -1.0,
+        1.0
+      ],
+      "ang_vel_z": [
+        -0.5,
+        0.5
+      ]
+    }
+  },
+  "height_scan": {
+    "frame_body": "pelvis",
+    "alignment": "yaw",
+    "size_m": [
+      0.2,
+      0.2
+    ],
+    "resolution_m": [
+      0.1,
+      0.1
+    ],
+    "offset_m": [
+      0.0,
+      0.0
+    ],
+    "max_distance_m": 5.0,
+    "geom_groups": [
+      0
+    ]
+  }
+}

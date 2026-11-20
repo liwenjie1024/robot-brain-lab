@@ -11,7 +11,7 @@ import nova_rt
 import numpy as np
 import pytest
 
-from nova_body.bench import FLOOR, SLIPPERY_FRICTION, TIMESTEP_S, Stairs
+from nova_body.bench import FLOOR, GROUND_CONDIM, GROUND_GROUP, SLIPPERY_FRICTION, TIMESTEP_S, Stairs
 from nova_body.policy import load_policy
 from nova_body.policy_bench import (
     START_CLEARANCE_M,
@@ -193,3 +193,17 @@ def test_the_fall_reflex_can_be_switched_off_for_getting_up(policy, fall_reflex,
     tick = bench.step(STILL)
     assert tick.mode == mode
     assert tick.reflexes is fall_reflex
+
+
+def test_the_ground_does_not_take_the_body_models_defaults():
+    """看脚下高度的小身体在模型里说"形状都在第 3 组"：测试台的地面、楼梯照样在第 0 组（高度扫描打的那一组），
+    摩擦、软硬照样是测试台的。"""
+    policy = load_policy(Path(__file__).parent / "fixtures" / "policy_scan" / "contract.json")
+    model = load_policy_body(policy, STAIRS)
+    ground = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, FLOOR), *stair_geoms(model)]
+    for geom in ground:
+        assert model.geom_group[geom] == GROUND_GROUP
+        assert model.geom_friction[geom][0] == pytest.approx(DEFAULT_FRICTION)
+        assert model.geom_condim[geom] == GROUND_CONDIM
+    pelvis = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "pelvis")
+    assert model.geom_group[pelvis] == 3

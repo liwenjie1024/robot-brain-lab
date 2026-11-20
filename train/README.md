@@ -22,6 +22,12 @@ docker compose run --rm train python -m nova_train.train Mjlab-Velocity-Flat-Uni
     --env.scene.num-envs 4096 --agent.max-iterations 2000 --agent.logger tensorboard `
     --agent.upload-model False --log-root /results/train --agent.run-name g1-flat
 
+# 练 G1 上下楼梯（我们自己的任务，2.2 步）：要练 6~7 个小时，容器自己在后台跑，会话结束了也接着练
+docker compose run -d --name nova-train-g1-stairs train python -m nova_train.train Nova-Velocity-Stairs-Unitree-G1 `
+    --env.scene.num-envs 4096 --agent.max-iterations 6000 --agent.logger tensorboard `
+    --agent.upload-model False --log-root /results/train --agent.run-name g1-stairs
+docker logs -f nova-train-g1-stairs                          # 看练到哪了；练完 docker rm nova-train-g1-stairs
+
 # 交给测试台：ONNX、练的时候的身体模型、规约（contract.json）写进 /results/policies/<名字>
 docker compose run --rm train python -m nova_train.export_policy Mjlab-Velocity-Flat-Unitree-G1 `
     /results/train/g1_velocity/<那一次训练> --name g1-velocity-flat --body unitree_g1
@@ -32,7 +38,7 @@ docker compose run --rm body python -m nova_body.policy_walk /results/policies/g
 docker compose run --rm train python -m nova_train.nova_warp  # Nova 的模型在显卡上的仿真：多快、多少显存
 docker compose run --rm train-lock                            # 改了 pyproject.toml 以后重新锁版本
 # 重新做身体那边测试用的小策略（改了 nova_train/fixtures.py 以后），做完一起提交
-docker compose run --rm -v ./body/tests/fixtures:/fixtures train python -m nova_train.fixtures /fixtures/policy
+docker compose run --rm -v ./body/tests/fixtures:/fixtures train python -m nova_train.fixtures /fixtures
 ```
 
 ## 里面有什么
@@ -44,4 +50,5 @@ docker compose run --rm -v ./body/tests/fixtures:/fixtures train python -m nova_
 | `nova_train/contract.py` | 从训练环境写策略的规约（`contracts/policy`）。规约表达不了的（历史、剪裁、延迟……）导出时就拒绝 |
 | `nova_train/export_policy.py` | 从存档导出 ONNX、身体模型、规约；导出以后比一比 ONNX 和 PyTorch 的动作，一样才交 |
 | `nova_train/nova_warp.py` | Nova 的模型在 MuJoCo Warp 里：站不站得住、每秒多少步、占多少显存 |
-| `nova_train/fixtures.py` | 做身体那边测试用的小策略（`body/tests/fixtures/policy`） |
+| `nova_train/fixtures.py` | 做身体那边测试用的小策略（`body/tests/fixtures/policy`，还有看脚下高度的 `policy_scan`） |
+| `nova_train/tasks.py` | 我们自己的训练任务（名字以 Nova- 开头）：G1 练上下楼梯（台阶到 20 cm，都是方块的地形） |

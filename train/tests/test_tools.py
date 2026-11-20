@@ -6,11 +6,11 @@ from pathlib import Path
 import mujoco_warp as mjw
 from mjlab.sim.sim import SimulationCfg
 
-from nova_train.fixtures import fixture_files
+from nova_train.fixtures import PLAIN, SCAN, fixture_files
 from nova_train.gpu import check
 from nova_train.train import EXPECTED_OVERFLOWS, apply_wp_opt_quietly
 
-COMMITTED_FIXTURES = Path("/body/tests/fixtures/policy")
+COMMITTED_FIXTURES = Path("/body/tests/fixtures")
 
 
 def test_the_gpu_is_usable_and_agrees_with_the_cpu():
@@ -40,7 +40,8 @@ class SimpleOption:
         self.graph_conditional = None
 
 
-def test_the_committed_fixture_policy_is_what_the_generator_makes():
-    """body/tests/fixtures/policy 里提交的三个文件，和现在做出来的一个字节都不差。"""
-    for name, content in fixture_files().items():
-        assert (COMMITTED_FIXTURES / name).read_bytes() == content, name
+def test_the_committed_fixture_policies_are_what_the_generator_makes():
+    """body/tests/fixtures 里提交的两个小策略（policy、policy_scan）的三个文件，和现在做出来的一个字节都不差。"""
+    for kind in (PLAIN, SCAN):
+        for name, content in fixture_files(kind).items():
+            assert (COMMITTED_FIXTURES / kind / name).read_bytes() == content, f"{kind}/{name}"

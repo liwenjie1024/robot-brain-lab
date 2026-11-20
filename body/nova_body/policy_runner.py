@@ -11,6 +11,7 @@ import mujoco
 import nova_rt
 import numpy as np
 
+from nova_body.height_scan import HeightScanner
 from nova_body.policy import JOINT_TERMS, ObservationTerm, Policy, PolicyError
 from nova_body.spine import JointCommand
 
@@ -134,6 +135,7 @@ class PolicyRunner:
             raise PolicyError("模型里没有重力，算不了重力的方向")
         self._gravity_direction = gravity / np.linalg.norm(gravity)
         self._steps_per_action = steps_per_action(float(model.opt.timestep), policy.rate_hz)
+        self._scanner = HeightScanner(model, policy.height_scan) if policy.height_scan else None
         self._last_action = np.zeros(policy.action_size)
         self._step = 0
 
@@ -195,6 +197,9 @@ class PolicyRunner:
             return rotation.T @ self._gravity_direction
         if term in JOINT_TERMS:
             return self._joint_term(term, data)
+        if term == ObservationTerm.HEIGHT_SCAN:
+            # 脚下的高度现在用仿真里的真数（以后换成胸前深度相机算的，2.5 步）。
+            return self._scanner.scan(data)
         return command_vector
 
     def _joint_term(self, term: ObservationTerm, data: mujoco.MjData) -> np.ndarray:

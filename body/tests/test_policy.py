@@ -94,13 +94,60 @@ def test_another_contract_version_is_refused(tmp_path):
 
 
 def test_an_unknown_observation_term_is_refused(tmp_path):
-    """规约里没有的观测（比如脚下的高度）不认。"""
+    """规约里没有的观测（比如脚离地多高）不认。"""
 
     def change(contract):
-        contract["observations"][0]["term"] = "height_scan"
+        contract["observations"][0]["term"] = "foot_height"
 
     with pytest.raises(PolicyError, match="observations/0/term"):
         load_policy(edit_contract(fixture_copy(tmp_path), change))
+
+
+SCAN_SETTINGS = {
+    "frame_body": "pelvis",
+    "alignment": "yaw",
+    "size_m": [0.2, 0.2],
+    "resolution_m": [0.1, 0.1],
+    "offset_m": [0.0, 0.0],
+    "max_distance_m": 5.0,
+    "geom_groups": [0],
+}
+
+
+def with_scan(term_size: int | None, settings: dict | None):
+    """在观测的最后加上 height_scan（term_size 是 None 就不加），规约里加上 settings（None 就不加）。"""
+
+    def change(contract):
+        if term_size is not None:
+            contract["observations"].append({"term": "height_scan", "size": term_size, "scale": 0.2})
+        if settings is not None:
+            contract["height_scan"] = settings
+
+    return change
+
+
+@pytest.mark.parametrize(
+    ("term_size", "settings"), [(9, None), (None, SCAN_SETTINGS)], ids=["有这一项、没有设置", "有设置、没有这一项"]
+)
+def test_a_height_scan_needs_both_the_term_and_its_settings(tmp_path, term_size, settings):
+    """看脚下的高度：观测里有这一项就要说清楚怎么量（height_scan），说了怎么量就要有这一项。"""
+    with pytest.raises(PolicyError, match="height_scan 就要有"):
+        load_policy(edit_contract(fixture_copy(tmp_path), with_scan(term_size, settings)))
+
+
+def test_a_height_scan_of_the_wrong_size_is_refused(tmp_path):
+    """0.2 m × 0.2 m、每 10 cm 一个点是 3 × 3 = 9 个点：观测里这一项写成 8 个就拒绝。"""
+    with pytest.raises(PolicyError, match="height_scan 的长度是 8，应该是 9"):
+        load_policy(edit_contract(fixture_copy(tmp_path), with_scan(8, SCAN_SETTINGS)))
+
+
+@pytest.mark.parametrize(
+    "change", [{"resolution_m": [0.0, 0.1]}, {"alignment": "base"}], ids=["网格的间隔是 0", "跟着全身转"]
+)
+def test_height_scan_settings_outside_the_schema_are_refused(tmp_path, change):
+    """高度扫描的设置不合规约就拒绝。"""
+    with pytest.raises(PolicyError, match="height_scan"):
+        load_policy(edit_contract(fixture_copy(tmp_path), with_scan(9, {**SCAN_SETTINGS, **change})))
 
 
 def test_a_joint_observation_of_the_wrong_size_is_refused(tmp_path):

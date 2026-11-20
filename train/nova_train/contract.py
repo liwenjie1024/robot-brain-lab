@@ -1,6 +1,6 @@
 """从 mjlab 的训练环境写出策略的规约（contracts/policy）：测试台照它把策略接到身体上。
 
-只认得规约里有的那几种观测。别的（观测的历史、剪裁、延迟、每一维不同的缩放）这一版还不支持：
+只认得规约里有的那几种观测（脚下的高度也写清楚射线怎么打）。别的（观测的历史、剪裁、延迟、每一维不同的缩放）这一版还不支持：
 导出的时候就拒绝（ExportError），不留到测试台上去猜。
 """
 
@@ -36,7 +36,13 @@ OBSERVATION_TERMS: Mapping[str, tuple[str, str]] = {
     "joint_vel": ("joint_vel", "joint_vel_rel"),
     "actions": ("last_action", "last_action"),
     "command": ("command", "generated_commands"),
+    "height_scan": ("height_scan", "height_scan"),
 }
+HEIGHT_SCAN_TERM = "height_scan"
+# 规约里的高度扫描：网格只跟着身体转偏航，射线竖直朝下（mjlab 的 GridPatternCfg、ray_alignment="yaw"）。
+SCAN_ALIGNMENT = "yaw"
+SCAN_PATTERN = "GridPatternCfg"
+SCAN_DIRECTION = (0.0, 0.0, -1.0)
 IMU_SENSOR_TYPES: Mapping[str, int] = {
     "base_lin_vel": mujoco.mjtSensor.mjSENS_VELOCIMETER,
     "base_ang_vel": mujoco.mjtSensor.mjSENS_GYRO,
@@ -63,6 +69,7 @@ def build_contract(
     ONNX 还有输入输出的名字。"""
     joints = joints_section(env)
     observations, imu_site = observations_section(env, [joint["name"] for joint in joints])
+    scan = height_scan_section(env)
     return {
         "contract_version": CONTRACT_VERSION,
         "name": name,
@@ -81,6 +88,7 @@ def build_contract(
         "joints": joints,
         "observations": observations,
         "command": command_section(env, common_step_counter),
+        **({"height_scan": scan} if scan else {}),
     }
 
 
@@ -206,6 +214,48 @@ def _imu_site(model: mujoco.MjModel, sensor_name: str, sensor_type: int) -> str:
         raise ExportError(f"传感器 {sensor_name} 不是装在一个点（site）上的")
     site = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, int(model.sensor_objid[sensor]))
     return site.removeprefix(f"{ENTITY}/")
+
+
+def height_scan_section(env: ManagerBasedRlEnv) -> dict[str, Any] | None:
+    """策略看脚下的高度时，射线怎么打（规约的 height_scan）；不看就是 None。"""
+    manager = env.observation_manager
+    if HEIGHT_SCAN_TERM not in manager.active_terms[ACTOR_GROUP]:
+        return None
+    term = manager.get_term_cfg(ACTOR_GROUP, HEIGHT_SCAN_TERM)
+    sensor = env.scene[term.params["sensor_name"]].cfg
+    return height_scan_spec(term, sensor, env.sim.mj_model)
+
+
+def height_scan_spec(term: Any, sensor: Any, model: mujoco.MjModel) -> dict[str, Any]:
+    """mjlab 的射线传感器（RayCastSensorCfg）和观测的设置 → 规约的 height_scan。规约表达不了的拒绝。"""
+    if term.params.get("offset", 0.0) != 0.0:
+        raise ExportError("高度扫描减了一个常数（offset），这一版的规约还不支持")
+    if term.params.get("miss_value") not in (None, sensor.max_distance):
+        raise ExportError("打不到的射线不是当最远的距离，这一版的规约还不支持")
+    frame = sensor.frame
+    if isinstance(frame, tuple) or frame.type != "body" or frame.entity != ENTITY:
+        raise ExportError(f"高度扫描要从机器人的一个身体（body）打，现在是 {frame}")
+    if sensor.ray_alignment != SCAN_ALIGNMENT:
+        raise ExportError(f"高度扫描的网格要只跟着身体转偏航（yaw），现在是 {sensor.ray_alignment}")
+    pattern = sensor.pattern
+    if type(pattern).__name__ != SCAN_PATTERN or tuple(pattern.direction) != SCAN_DIRECTION:
+        raise ExportError("高度扫描要是竖直朝下的一片网格（GridPatternCfg）")
+    if not sensor.exclude_parent_body:
+        raise ExportError("高度扫描要不打它出发的那个身体（exclude_parent_body）")
+    if sensor.include_geom_groups is None:
+        raise ExportError("高度扫描要说清楚打哪几组形状（include_geom_groups）")
+    if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{ENTITY}/{frame.name}") < 0:
+        raise ExportError(f"模型里没有高度扫描的身体 {frame.name}")
+    resolution = pattern.resolution if isinstance(pattern.resolution, tuple) else (pattern.resolution,) * 2
+    return {
+        "frame_body": frame.name,
+        "alignment": SCAN_ALIGNMENT,
+        "size_m": [float(value) for value in pattern.size],
+        "resolution_m": [float(value) for value in resolution],
+        "offset_m": [float(value) for value in pattern.offset],
+        "max_distance_m": float(sensor.max_distance),
+        "geom_groups": sorted(int(group) for group in sensor.include_geom_groups),
+    }
 
 
 def command_section(env: ManagerBasedRlEnv, common_step_counter: int) -> dict[str, Any]:

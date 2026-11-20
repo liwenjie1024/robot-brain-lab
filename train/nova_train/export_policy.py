@@ -20,6 +20,7 @@ from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
 from nova_body.policy import file_sha256, load_policy
 
+import nova_train.tasks  # noqa: F401  登记我们自己的任务（Nova-…）
 from nova_train.contract import ExportError, build_contract, export_body
 
 POLICIES_DIR = Path("/results/policies")

@@ -1,8 +1,9 @@
 """做测试用的小策略：一个两条腿的小身体、一个 ONNX、一份规约。身体的测试（body/tests）用它们。
 
-ONNX 的输出就是从观测里挑出来的两个数（重力方向的 x、命令的转弯），这样测试能核对观测的每一项放在哪。
+两个：policy 的 ONNX 输出从观测里挑出来的两个数（重力方向的 x、命令的转弯）；policy_scan 还看脚下的高度
+（3 x 3 个点），输出高度扫描的第一个点和正中间的点。这样测试能核对观测的每一项放在哪。
 身体的容器里没有做 ONNX 的库，所以在这里做好、提交进仓库；训练这边的测试核对提交的和现在做出来的一样。
-用法：docker compose run --rm -v ./body/tests/fixtures:/fixtures train python -m nova_train.fixtures /fixtures/policy
+用法：docker compose run --rm -v ./body/tests/fixtures:/fixtures train python -m nova_train.fixtures /fixtures
 """
 
 import argparse
@@ -14,6 +15,8 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
+PLAIN = "policy"
+SCAN = "policy_scan"
 CONTRACT_NAME = "contract.json"
 ONNX_NAME = "policy.onnx"
 BODY_NAME = "body.xml"
@@ -76,15 +79,35 @@ OBSERVATION_SIZE = sum(item["size"] for item in OBSERVATIONS)
 GRAVITY_X_INDEX = 6
 TURN_COMMAND_INDEX = OBSERVATION_SIZE - 1
 
+# 看脚下高度的那一个：骨盆下面 0.2 m x 0.2 m，每 10 cm 一个点（3 x 3），乘 1 / 最远的距离（和 mjlab 一样）。
+# 身体的形状放在第 3 组（和 mjlab 的 G1 一样），射线只打第 0 组（地面）。
+HEIGHT_SCAN = {
+    "frame_body": "pelvis",
+    "alignment": "yaw",
+    "size_m": [0.2, 0.2],
+    "resolution_m": [0.1, 0.1],
+    "offset_m": [0.0, 0.0],
+    "max_distance_m": 5.0,
+    "geom_groups": [0],
+}
+SCAN_POINTS = 9
+SCAN_OBSERVATIONS = [*OBSERVATIONS, {"term": "height_scan", "size": SCAN_POINTS, "scale": 0.2}]
+SCAN_OBSERVATION_SIZE = OBSERVATION_SIZE + SCAN_POINTS
+# 动作 0 = 高度扫描的第一个点，动作 1 = 正中间的点。
+FIRST_SCAN_INDEX = OBSERVATION_SIZE
+CENTER_SCAN_INDEX = OBSERVATION_SIZE + SCAN_POINTS // 2
+ROBOT_GEOM_GROUP = 3
 
-def selection_onnx() -> bytes:
-    weight = np.zeros((OBSERVATION_SIZE, len(JOINTS)), dtype=np.float32)
-    weight[GRAVITY_X_INDEX, 0] = 1.0
-    weight[TURN_COMMAND_INDEX, 1] = 1.0
+
+def selection_onnx(observation_size: int, picked: tuple[int, int]) -> bytes:
+    """动作 i = 观测的第 picked[i] 个。"""
+    weight = np.zeros((observation_size, len(JOINTS)), dtype=np.float32)
+    for action, index in enumerate(picked):
+        weight[index, action] = 1.0
     graph = helper.make_graph(
         [helper.make_node("MatMul", ["obs", "weight"], ["actions"])],
         "fixture_policy",
-        [helper.make_tensor_value_info("obs", TensorProto.FLOAT, [1, OBSERVATION_SIZE])],
+        [helper.make_tensor_value_info("obs", TensorProto.FLOAT, [1, observation_size])],
         [helper.make_tensor_value_info("actions", TensorProto.FLOAT, [1, len(JOINTS)])],
         initializer=[numpy_helper.from_array(weight, name="weight")],
     )
@@ -96,16 +119,25 @@ def selection_onnx() -> bytes:
     return model.SerializeToString()
 
 
-def contract(onnx_bytes: bytes, body_bytes: bytes) -> dict:
+def scan_body_xml() -> str:
+    """同一个小身体，形状都放在第 3 组。"""
+    return BODY_XML.replace(
+        "  <worldbody>", f'  <default>\n    <geom group="{ROBOT_GEOM_GROUP}"/>\n  </default>\n  <worldbody>', 1
+    )
+
+
+def contract(onnx_bytes: bytes, body_bytes: bytes, kind: str = PLAIN) -> dict:
+    scan = kind == SCAN
+    extra = {"height_scan": HEIGHT_SCAN} if scan else {}
     return {
         "contract_version": 1,
-        "name": "fixture",
+        "name": "fixture-scan" if scan else "fixture",
         "body": {"name": "fixture", "model": BODY_NAME, "sha256": hashlib.sha256(body_bytes).hexdigest()},
         "trained": {
             "tool": "nova_train.fixtures",
             "version": "1",
             "source": "train/nova_train/fixtures.py",
-            "task": "测试用：从观测里挑出两个数",
+            "task": "测试用：从观测里挑出高度扫描的两个点" if scan else "测试用：从观测里挑出两个数",
             "iterations": 0,
             "date": "2026-11-18",
         },
@@ -118,26 +150,35 @@ def contract(onnx_bytes: bytes, body_bytes: bytes) -> dict:
         "rate_hz": 50.0,
         "imu_site": "imu",
         "joints": JOINTS,
-        "observations": OBSERVATIONS,
+        "observations": SCAN_OBSERVATIONS if scan else OBSERVATIONS,
         "command": {
             "fields": ["lin_vel_x", "lin_vel_y", "ang_vel_z"],
             "ranges": {"lin_vel_x": [-1.0, 1.0], "lin_vel_y": [-1.0, 1.0], "ang_vel_z": [-0.5, 0.5]},
         },
+        **extra,
     }
 
 
-def fixture_files() -> dict[str, bytes]:
+def fixture_files(kind: str = PLAIN) -> dict[str, bytes]:
     """文件名 → 内容。每次做出来都一样。"""
-    onnx_bytes = selection_onnx()
-    body_bytes = BODY_XML.encode("utf-8")
-    contract_bytes = (json.dumps(contract(onnx_bytes, body_bytes), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if kind == SCAN:
+        onnx_bytes = selection_onnx(SCAN_OBSERVATION_SIZE, (FIRST_SCAN_INDEX, CENTER_SCAN_INDEX))
+        body_bytes = scan_body_xml().encode("utf-8")
+    else:
+        onnx_bytes = selection_onnx(OBSERVATION_SIZE, (GRAVITY_X_INDEX, TURN_COMMAND_INDEX))
+        body_bytes = BODY_XML.encode("utf-8")
+    document = contract(onnx_bytes, body_bytes, kind)
+    contract_bytes = (json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     return {ONNX_NAME: onnx_bytes, BODY_NAME: body_bytes, CONTRACT_NAME: contract_bytes}
 
 
 def write_fixtures(directory: Path) -> None:
-    directory.mkdir(parents=True, exist_ok=True)
-    for name, content in fixture_files().items():
-        (directory / name).write_bytes(content)
+    """在 directory 下面写 policy、policy_scan 两个目录。"""
+    for kind in (PLAIN, SCAN):
+        target = directory / kind
+        target.mkdir(parents=True, exist_ok=True)
+        for name, content in fixture_files(kind).items():
+            (target / name).write_bytes(content)
 
 
 def main() -> None:

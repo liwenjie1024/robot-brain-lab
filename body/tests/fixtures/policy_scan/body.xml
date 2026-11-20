@@ -1,0 +1,25 @@
+<mujoco model="fixture">
+  <option timestep="0.005"/>
+  <default>
+    <geom group="3"/>
+  </default>
+  <worldbody>
+    <body name="pelvis" pos="0 0 0.4">
+      <freejoint name="root"/>
+      <geom name="pelvis" type="box" size="0.1 0.1 0.05" mass="2"/>
+      <site name="imu" pos="0.05 0 0"/>
+      <body name="leg_a" pos="0 0.06 -0.05">
+        <joint name="joint_a" axis="0 1 0" range="-1 1"/>
+        <geom name="leg_a" type="capsule" fromto="0 0 0 0 0 -0.3" size="0.02" mass="0.5"/>
+      </body>
+      <body name="leg_b" pos="0 -0.06 -0.05">
+        <joint name="joint_b" axis="0 1 0" range="-1 1"/>
+        <geom name="leg_b" type="capsule" fromto="0 0 0 0 0 -0.3" size="0.02" mass="0.5"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="joint_a" joint="joint_a" kp="10"/>
+    <position name="joint_b" joint="joint_b" kp="10"/>
+  </actuator>
+</mujoco>
