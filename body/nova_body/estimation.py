@@ -271,6 +271,7 @@ class BodyFeel:
             base_lin_vel=self._estimator.velocity_in_imu,
             base_ang_vel=gyro,
             projected_gravity=self._root_from_imu @ self._estimator.gravity_in_imu,
+            base_rotation=self._estimator.rotation,
         )
 
     def sample(self, data: mujoco.MjData) -> None:

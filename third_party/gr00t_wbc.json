@@ -9,6 +9,21 @@
   "lfs_base_url": "https://media.githubusercontent.com/media/NVlabs/GR00T-WholeBodyControl/1e1ec4f5f27e6c3e03048f693bd7c60cce04afda/",
   "files": [
     {
+      "path": "gear_sonic/data/robot_model/instantiation/g1.py",
+      "bytes": 2270,
+      "sha256": "801fe771bd3a61ec74d59f73952d34605dca089cbca5e42d8333e344d342f864"
+    },
+    {
+      "path": "gear_sonic/data/robot_model/model_data/g1/g1_29dof_with_hand.xml",
+      "bytes": 54754,
+      "sha256": "58c82f77753db54f8a6ca0a8e020e142b015d8587db6cfc442f9a75f2bc444c6"
+    },
+    {
+      "path": "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml",
+      "bytes": 1130,
+      "sha256": "274e7b3755dc1eedcf210af54d1c97749f31457d77ae2c499ec234e804065b21"
+    },
+    {
       "path": "gear_sonic/envs/manager_env/robots/g1.py",
       "bytes": 9830,
       "sha256": "42f9b4394eb21512735da4b1ca78c2d0546c4221c7bdaf8b3a186d8dc5588ba9"
@@ -22,6 +37,26 @@
       "path": "gear_sonic/trl/utils/order_converter.py",
       "bytes": 9330,
       "sha256": "236e2705d306ab1c938af5baf973fbcd291b04fbdd372bc87e3fa56c907d069f"
+    },
+    {
+      "path": "gear_sonic/utils/mujoco_sim/base_sim.py",
+      "bytes": 27260,
+      "sha256": "15cd5a48e60dd34eef3696783b4d1def15ecb1ff9f69bb76c592c24e2b500dcb"
+    },
+    {
+      "path": "gear_sonic/utils/mujoco_sim/configs.py",
+      "bytes": 10714,
+      "sha256": "06945b00653e7a8b8f3a4adfda64ad03b925be59ceb5c1482b4cf94ca273bff8"
+    },
+    {
+      "path": "gear_sonic/utils/mujoco_sim/unitree_sdk2py_bridge.py",
+      "bytes": 16855,
+      "sha256": "9873d67aa6b9dcbe2ceba2c9d0a8810ba0e303fbd3fc3a6bcfde24fb111ab3a3"
+    },
+    {
+      "path": "gear_sonic/utils/mujoco_sim/wbc_configs/g1_29dof_sonic_model12.yaml",
+      "bytes": 12453,
+      "sha256": "28a7fb6b80692b081e880d11662a63fe179c7bb31354c3a98b9dbedc624abfae"
     },
     {
       "path": "gear_sonic_deploy/g1/g1_29dof.xml",
@@ -270,6 +305,26 @@
       "sha256": "ec500585ccfb84ec588191c1b6a975b5c3bade2afd85c095b25091ba073eeb36"
     },
     {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/input_interface/gamepad.hpp",
+      "bytes": 34604,
+      "sha256": "6e49b1faa4bcb63d5deadc319139eb2f9b3b6f366499f139fc070fbfc939d21b"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/input_interface/input_command.hpp",
+      "bytes": 4860,
+      "sha256": "9cf158de8f65f16a0b7de6e32c55969d019126a75f4006a40f1a70bf0b68803d"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/input_interface/input_interface.hpp",
+      "bytes": 23078,
+      "sha256": "f6e51c33c2f140b50d946b0a422b3b527b3f9a4e29a5afce0b775c7a3c09c3c4"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/input_interface/keyboard_handler.hpp",
+      "bytes": 34798,
+      "sha256": "e6067e5717c8bc7f92080ce045546d48f6eeb1b157fa5e446ca78c25bc8f5930"
+    },
+    {
       "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/localmotion_kplanner.hpp",
       "bytes": 29239,
       "sha256": "2cd8fcd975e01017f3b3d9a32a2d0e6abc9bf4bdf4a0a9503f9bf4a9f080b34b"
@@ -310,6 +365,11 @@
       "sha256": "073f8d04f292473851b6f0b923e6af7b2dc0686658eba19a8deab08c839e4fb1"
     },
     {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/state_logger.hpp",
+      "bytes": 11969,
+      "sha256": "d09a94c935a5deeede9f02d8569eb6c067ed29e02a5eba5e7432fc5040e11f99"
+    },
+    {
       "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include/utils.hpp",
       "bytes": 8814,
       "sha256": "bf35c0c3160bd9c8eea53e85ee1a9a64ebad689d8ece5c6b2e0da97905a6b39b"
@@ -328,6 +388,11 @@
       "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/src/motor_gain_scaling.cpp",
       "bytes": 5649,
       "sha256": "27dc15179fdf72d7cb1765961472b52f356ab586114259fcba58871c49495285"
+    },
+    {
+      "path": "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/src/state_logger.cpp",
+      "bytes": 22571,
+      "sha256": "21532714aed16d7aa0faa5b4e27b5665a5022defe24daeb795b594e92c659dc0"
     },
     {
       "path": "legal/Apache License - GEAR-SONIC.txt",

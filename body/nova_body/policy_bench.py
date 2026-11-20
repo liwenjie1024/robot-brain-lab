@@ -1,13 +1,17 @@
 """测试台上跑一个策略（2.2 步起，考试都用它）：小脑层（策略）→ 脊髓层（反射、硬限制、换算）→ 驱动器那一层 → 仿真，
 状态估计跟着跑。
 
-身体用练的时候的那个模型（规约里写的、核对过 SHA-256），换成测试台的步长、积分的方法和地面，可以再加一段楼梯。
+"大脑"有两种，样子一样（BenchBrain：怎么建身体、默认的姿势、每一步的控制器）：练出来的、有规约的策略（ContractBrain），
+和现成的 SONIC（sonic_brain.SonicBrain）。身体用练的时候的那个模型（规约里写的、核对过 SHA-256），
+换成测试台的步长、积分的方法和地面，可以再加一段楼梯。
 可以从站着、趴着、仰着、侧躺着开始。量的都是仿真里的真数（考试的裁判不信身体自己报的）。
 """
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 import mujoco
 import nova_rt
@@ -19,9 +23,9 @@ from nova_body.bench import FLOOR, Stairs, add_floor, add_stairs, use_bench_sett
 from nova_body.estimation import BodyFeel
 from nova_body.policy import Policy
 from nova_body.policy_bodies import info_for
-from nova_body.policy_runner import PolicyRunner, root_body
+from nova_body.policy_runner import BodySense, PolicyRunner, root_body
 from nova_body.spinal import SpinalLayer, reflexes_for, tilt_rad
-from nova_body.spine import spine_for
+from nova_body.spine import JointCommand, spine_for
 
 # 开始时最低的一点离地面这么高，落下去再开始（和练的时候一样，从一点点高的地方放下）。
 START_CLEARANCE_M = 0.01
@@ -60,6 +64,51 @@ class Tick:
     mode: int
 
 
+class Runner(Protocol):
+    def step(
+        self, data: mujoco.MjData, command: Mapping[str, float], sense: BodySense | None = None
+    ) -> JointCommand: ...
+
+
+class BenchBrain(Protocol):
+    """测试台上的一个"大脑"：名字、身体的名字（policy_bodies 里认得的）、每秒算几次、怎么建身体、默认的姿势、控制器。"""
+
+    name: str
+    body_name: str
+    rate_hz: float
+
+    def load_body(self, stairs: Stairs | None = None) -> mujoco.MjModel: ...
+
+    def default_positions(self) -> dict[str, float]: ...
+
+    def runner(self, model: mujoco.MjModel, spine: nova_rt.Spine) -> Runner: ...
+
+
+class ContractBrain:
+    """练出来的、有规约的策略。"""
+
+    def __init__(self, policy: Policy) -> None:
+        self.policy = policy
+        self.name, self.body_name, self.rate_hz = policy.name, policy.body_name, policy.rate_hz
+
+    def load_body(self, stairs: Stairs | None = None) -> mujoco.MjModel:
+        return load_policy_body(self.policy, stairs)
+
+    def default_positions(self) -> dict[str, float]:
+        return default_positions(self.policy)
+
+    def runner(self, model: mujoco.MjModel, spine: nova_rt.Spine) -> PolicyRunner:
+        return PolicyRunner(model, self.policy, spine)
+
+
+def as_brain(brain: "Policy | BenchBrain") -> BenchBrain:
+    return ContractBrain(brain) if isinstance(brain, Policy) else brain
+
+
+def default_positions(policy: Policy) -> dict[str, float]:
+    return {joint.name: joint.default_position_rad for joint in policy.joints}
+
+
 def load_policy_body(policy: Policy, stairs: Stairs | None = None) -> mujoco.MjModel:
     """练的时候用的身体模型，放到测试台上：测试台的步长、积分的方法、地面（和楼梯）。"""
     spec = mujoco.MjSpec.from_file(str(policy.body_model_path))
@@ -72,14 +121,14 @@ def load_policy_body(policy: Policy, stairs: Stairs | None = None) -> mujoco.MjM
 
 
 def start_data(
-    model: mujoco.MjModel, policy: Policy, pose: StartPose = StartPose.STANDING, x_m: float = 0.0
+    model: mujoco.MjModel, defaults: Mapping[str, float], pose: StartPose = StartPose.STANDING, x_m: float = 0.0
 ) -> mujoco.MjData:
-    """默认的姿势，站着或者躺着，在 x_m 处，最低的一点比地面高一点。"""
+    """默认的姿势（关节的名字 → 角度），站着或者躺着，在 x_m 处，最低的一点比地面高一点。"""
     data = mujoco.MjData(model)
     root_address = model.jnt_qposadr[free_joint(model)]
-    for joint in policy.joints:
-        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint.name)
-        data.qpos[model.jnt_qposadr[joint_id]] = joint.default_position_rad
+    for name, position in defaults.items():
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        data.qpos[model.jnt_qposadr[joint_id]] = position
     data.qpos[root_address] = x_m
     if pose in LYING_AXES:
         data.qpos[root_address + 3 : root_address + 7] = lying_quaternion(*LYING_AXES[pose])
@@ -124,7 +173,7 @@ class PolicyBench:
 
     def __init__(
         self,
-        policy: Policy,
+        policy: "Policy | BenchBrain",
         *,
         sensed: bool = True,
         stairs: Stairs | None = None,
@@ -132,19 +181,19 @@ class PolicyBench:
         x_m: float = 0.0,
         fall_reflex: bool = True,
     ) -> None:
-        self.policy = policy
+        self.brain = as_brain(policy)
         self.sensed = sensed
         self.stairs = stairs
         self.fall_reflex = fall_reflex
-        self.model = load_policy_body(policy, stairs)
+        self.model = self.brain.load_body(stairs)
         self.spine = spine_for(self.model)
         self.spinal = SpinalLayer(self.spine, reflexes_for(self.model, self.spine))
         self.drives = DriveLayer(self.model, [None] * self.model.nu)
-        self.runner = PolicyRunner(self.model, policy, self.spine)
-        self.data = start_data(self.model, policy, start, x_m)
-        info = info_for(policy.body_name)
+        self.runner = self.brain.runner(self.model, self.spine)
+        self.data = start_data(self.model, self.brain.default_positions(), start, x_m)
+        info = info_for(self.brain.body_name)
         if sensed and info.estimator is None:
-            raise ValueError(f"测试台不知道身体 {policy.body_name} 的 IMU 和脚在哪，做不了状态估计")
+            raise ValueError(f"测试台不知道身体 {self.brain.body_name} 的 IMU 和脚在哪，做不了状态估计")
         self.feel = BodyFeel(self.model, info.estimator, self.spine, self.data) if info.estimator else None
         self.root = root_body(self.model)
         trunk = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, info.trunk) if info.trunk else self.root
@@ -161,7 +210,7 @@ class PolicyBench:
         self._ground = slice(root_address, root_address + 2)
 
     def _standing_height(self) -> float:
-        standing = start_data(self.model, self.policy)
+        standing = start_data(self.model, self.brain.default_positions())
         return float(standing.xpos[self.root][2])
 
     @property

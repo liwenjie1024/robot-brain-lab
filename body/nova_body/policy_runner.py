@@ -31,11 +31,13 @@ class BodySense:
     """身体自己感觉到的（IMU 和状态估计给的），代替仿真里的真数给策略看。
 
     base_lin_vel、base_ang_vel 在 IMU 的坐标里（m/s、rad/s），projected_gravity 在骨盆的坐标里（单位向量）。
+    base_rotation：估出来的 IMU 那一点的转动（3 x 3，在世界坐标里；偏航会慢慢漂），要整个朝向的策略（SONIC）用。
     """
 
     base_lin_vel: np.ndarray
     base_ang_vel: np.ndarray
     projected_gravity: np.ndarray
+    base_rotation: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

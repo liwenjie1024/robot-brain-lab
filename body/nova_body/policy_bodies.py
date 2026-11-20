@@ -17,19 +17,19 @@ class PolicyBodyInfo:
     estimator: EstimatorSetup | None = None
 
 
-POLICY_BODIES: dict[str, PolicyBodyInfo] = {
-    "unitree_g1": PolicyBodyInfo(
-        trunk="torso_link",
-        estimator=EstimatorSetup(
-            imu_site="imu_in_pelvis",
-            accelerometer="imu_lin_acc",
-            gyro="imu_ang_vel",
-            grade=ImuGrade.STANDARD,
-            feet=("left_foot", "right_foot"),
-            foot_bodies=("left_ankle_roll_link", "right_ankle_roll_link"),
-        ),
+# 练 G1 的那个（mjlab 的）和 SONIC 部署代码里的 G1（测试台在骨盆上加了同样的 IMU 和脚底的点）用同一套。
+_G1 = PolicyBodyInfo(
+    trunk="torso_link",
+    estimator=EstimatorSetup(
+        imu_site="imu_in_pelvis",
+        accelerometer="imu_lin_acc",
+        gyro="imu_ang_vel",
+        grade=ImuGrade.STANDARD,
+        feet=("left_foot", "right_foot"),
+        foot_bodies=("left_ankle_roll_link", "right_ankle_roll_link"),
     ),
-}
+)
+POLICY_BODIES: dict[str, PolicyBodyInfo] = {"unitree_g1": _G1, "unitree_g1_sonic": _G1}
 
 
 def info_for(body_name: str) -> PolicyBodyInfo:

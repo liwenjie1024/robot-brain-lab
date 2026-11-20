@@ -51,6 +51,8 @@ body/            身体：设计计算和模型生成。Python 3.13，只在 Lin
                  policy_bench（测试台上跑一个策略：小脑层 → 脊髓层 → 驱动器 → 仿真，状态估计跟着；站着、躺着开始；楼梯）
                  policy_walk（按命令表考走路的策略） p2_exam（P2 的考试：站 1 小时、被推、走 1 公里、上下楼梯、起来）
                  height_scan（高度扫描：从骨盆往下打一片竖直的射线，和 mjlab 一样）
+                 nova_body，SONIC（NVIDIA 现成的 G1 全身控制，基线）: sonic_params（照它源码的数） sonic_motion（参考动作：
+                 30 Hz 换 50 Hz、上下文、新旧两段混合） sonic_planner（运动规划器） sonic_brain（G1 的身体、每一步的控制器）
                  nova_sim，实时的仿真和给网页的服务（容器 sim，端口 8870）: bodies（能选的身体） scene（给网页的"样子"）
                  live（跟着钟走的仿真：暂停、松开、推、重新开始） protocol（照规约检查） server（HTTP 和 WebSocket）
                  channel（给每个网页发东西的队列）
@@ -100,6 +102,7 @@ docker logs -f nova-train-<名字>                               # 看它练到�
 docker compose run --rm train python -m nova_train.export_policy <任务> <那次训练的目录> --name <名字> --body <身体>  # 交给测试台
 docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json  # 在测试台上考走路
 docker compose run --rm body python -m nova_body.p2_exam /results/policies/<名字>/contract.json  # P2 的考试（几个进程一起考，约 15 分钟）
+docker compose run -d --name nova-exam-sonic body python -m nova_body.p2_exam sonic  # 考 SONIC（4 个进程，一个多小时）
 docker compose run --rm train-lock                             # 改了 train/pyproject.toml 以后重新锁版本
 ```
 
@@ -126,6 +129,12 @@ docker compose run --rm train-lock                             # 改了 train/py
   - 策略（`PolicyRunner`）只给关节的命令（`JointCommand`），经过脊髓层（`step_spine`）和驱动器那一层（`DriveLayer.command_impedance`：目标、刚度、阻尼、前馈力一起晚 1 毫秒到；前馈力放在 MuJoCo 的 position 驱动器的偏置里）。策略不管的关节要测试台给命令（`base`）。
   - 状态估计（`estimation.py`）：IMU 的读数来自 `SensorModel`（它要的是 `SensorList`：`Body` 或 `SensorSet`），腿的运动学用一份自己的仿真状态（骨盆放在原点），关节的角度从驱动器的读数换算（像编码器）。着地的点"会滑多少"的噪声不能给大（给 0.1 m/s/√Hz 时站着也差 0.1 m/s），现在是 0.002。练的时候的身体（规约里的 `body.name`）用哪个 IMU、哪两只脚、推哪里写在 `policy_bodies.POLICY_BODIES`；测试台的身体用 `setup_for_body`。G1 脚上没有力传感器，着地用仿真里脚和地面的接触力：地面是固定在世界上的形状（平地、楼梯的每一级），不只是叫 floor 的那一块。`policy_walk` 走两遍：策略看仿真里的真数、看身体自己感觉到的（`BodySense`）。
   - 反射（`reflexes.hpp`、`spinal.py`）在小脑层的命令和硬限制之间：先改命令（变软、顶住、断力），再由 Spine 守住硬限制；保护的反射把每个驱动器能出的力的比例交给 Spine（`actuator_force_scale`）。跌倒、停止一直留着，直到 `reset`；停止只升不降。2 类停止只标出来（要小脑层停下来站住），1 类的"坐下"等 2.6 步。碰撞只看手臂的皮肤（`SkinMap`）。0 类停止的刹车阻尼是驱动器的 Km²（没有驱动器模型的身体是 0）。走路的考试也走整条脊髓层（`SpinalLayer`）。跌倒的反射可以关掉（`fall_armed`）：考"起来"时关掉，因为躺着本来就是歪的（以后是小脑层在做起来的动作时关）；关掉只是不判断新的摔倒，已经在摔倒的要 `reset`。测试台不认识的身体没有状态估计，反射看真的歪斜。跌倒的门槛（歪过 50°，或者歪过 35° 又每秒倒 3 弧度以上）是 2.2 步按 G1 被推的数定的（88 次，推的时刻错开）：原来的 40°、25°、每秒 1.5 弧度把救得回来的也当成在摔倒，变软了反而摔了（往左、往右推时扛得住的因此少了一档）。G1 最多从 46° 救回来，30° 上下时还会每秒倒 3.8 弧度：光看歪斜分不清，所以宁可晚报（2.6 步换成更好的判断）。改门槛以前先把反射关掉推一遍：救得回来的最多歪多少、倒得多快，救不回来的提前多久报。
+- **SONIC 接到测试台**（`sonic_*.py`，2.2 步，为什么这样做）：
+  - 测试台认两种"大脑"（`policy_bench.BenchBrain`：怎么建身体、默认的姿势、每一步的控制器）：有规约的策略（`ContractBrain`）和 `SonicBrain`。SONIC 不吃速度命令、也不是一个网络，表达不进规约，所以照它部署的 C++（`third_party/gr00t_wbc` 里的 `g1_deploy_onnx_ref.cpp`）用 Python 重写了那一圈。读源码的笔记要点都写在 `sonic_*.py` 的说明里；改之前先对照源码。
+  - 每秒 50 次：记状态 → 对齐朝向 → 编码器（1762 个数，G1 模式只填未来 10 帧的关节、转速、骨盆朝向，别的留 0）→ 解码器（994 个数：动作记号 + 10 帧的历史）→ 目标 = 默认 + 动作 x 比例 → 换上新规划的一段、前进一帧。换上新的一段的同一步帧号就变成 1（不然每次重新规划参考动作都慢一帧）。朝向的对齐量只在第一次拿到规划的动作时定下，之后不变。规划器每秒看 10 次要不要重新规划（走法、脸朝的方向变了；走着时速度、方向变了或者每 1 秒）。
+  - 考试的速度命令照它手柄的程序换：脸朝的方向按转的速度累加，走的方向 = 命令的方向 + 脸朝的方向，速度定走法（慢走 0.2~0.8、走 0.8~1.5、跑 1.5~3.0 m/s）。不替它校正速度：它的规划器生成的参考动作比要的慢（要 0.5 给 0.42，要 1.0 给 0.82），机器人跟参考动作跟得很紧。
+  - 身体用部署代码里的 `g1_29dof.xml`（不带手），加上官方仿真里关节的动力学（转子惯量 0.01、阻尼 0.05、摩擦 0.2，腕 0.1），力矩电机换成位置控制（SONIC 的软硬、关节上写的力矩上限），骨盆上加 IMU、两个脚底的点（位置照 mjlab 的 G1）。MuJoCo 3.17 的 MjSpec 里关节的阻尼是三个数，力矩上限叫 `actfrcrange`。
+  - 规划器有 774 MB：一个进程里读一次大家共用（`functools.cache`），考试只开 4 个进程（每个约 1.8 GB 内存）。
 - **P2 的考试**（`p2_exam.py`，2.2 步，为什么这样做）：
   - 都在 `PolicyBench` 上考（小脑层 → 脊髓层 → 驱动器那一层 → 仿真），策略看身体自己感觉到的；裁判看仿真里的真数。几道题互不相干，每一份一个进程（用 spawn：父进程里已经有 ONNX 的线程）。
   - 摔倒 = 骨盆歪过 60° 或者离脚下的地面低到站着时的一半（楼梯上从骨盆下面那一级算）；站着 = 至少站着时的八成高、歪不过 20°。

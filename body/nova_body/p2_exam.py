@@ -3,7 +3,8 @@
 每道题都在 `PolicyBench` 上考：策略经过脊髓层（反射、硬限制、换算）和驱动器那一层，看的是身体自己感觉到的
 （IMU、状态估计）。裁判看仿真里的真数。几道题互不相干，分在几个进程里一起考。
 用法：docker compose run --rm body python -m nova_body.p2_exam /results/policies/<名字>/contract.json
-结果写在规约旁边的 exam.json，表打印出来（抄进 P2 计划）。
+      docker compose run --rm body python -m nova_body.p2_exam sonic        （NVIDIA 的 SONIC）
+结果写在规约旁边的 exam.json（SONIC 的写在 /results/policies/sonic/），表打印出来（抄进 P2 计划）。
 """
 
 import argparse
@@ -22,8 +23,9 @@ import numpy as np
 
 from nova_body.bench import Stairs
 from nova_body.policy import Policy, load_policy
-from nova_body.policy_bench import STILL, PolicyBench, StartPose
+from nova_body.policy_bench import STILL, BenchBrain, PolicyBench, StartPose
 from nova_body.policy_walk import Segment, SegmentResult, numbers, walk_on
+from nova_body.sonic_brain import SonicBrain
 
 EXAM_RESULT_NAME = "exam.json"
 NO_PUSH = (0.0, 0.0, 0.0)
@@ -85,6 +87,11 @@ LYING_POSES = (StartPose.PRONE, StartPose.SUPINE, StartPose.SIDE)
 
 # 一起考的进程最多这么多个，再给别的程序留几个核（BL-01 的服务可能在跑）。
 SPARE_CPUS = 4
+# SONIC 的每个进程要装一份 774 MB 的规划器（读进来更大），进程开多了内存不够。
+SONIC_WORKERS = 4
+SONIC = "sonic"
+RESULTS_DIR = Path("/results/policies")
+Brain = Policy | BenchBrain
 
 
 @dataclass(frozen=True)
@@ -205,7 +212,7 @@ class ExamResult:
     get_up: list[GetUpResult] = field(default_factory=list)
 
 
-def exam_stand(policy: Policy, *, seconds: float = STAND_S, sensed: bool = True) -> StandResult:
+def exam_stand(policy: Brain, *, seconds: float = STAND_S, sensed: bool = True) -> StandResult:
     """站 seconds 秒（命令是站着不动）。"""
     bench = PolicyBench(policy, sensed=sensed)
     settle_steps = round(SETTLE_S / bench.timestep)
@@ -241,7 +248,7 @@ def exam_stand(policy: Policy, *, seconds: float = STAND_S, sensed: bool = True)
 
 
 def exam_push(
-    policy: Policy, direction: str, *, shares: Sequence[float] = PUSH_SHARES, sensed: bool = True
+    policy: Brain, direction: str, *, shares: Sequence[float] = PUSH_SHARES, sensed: bool = True
 ) -> PushResult:
     """往 direction 一档一档地推（力是体重的 share 倍），每档推 PUSH_ATTEMPTS 次，有一次倒了就不再往上推。"""
     if direction not in PUSH_DIRECTIONS:
@@ -285,7 +292,7 @@ def push_trial(share: float, attempts: Sequence[PushAttempt]) -> PushTrial:
 
 
 def push_once(
-    policy: Policy, direction: tuple[float, float, float], share: float, delay_s: float, *, sensed: bool
+    policy: Brain, direction: tuple[float, float, float], share: float, delay_s: float, *, sensed: bool
 ) -> PushAttempt:
     """站稳以后推一下（比 PUSH_START_S 晚 delay_s），再看一会儿倒没倒。"""
     bench = PolicyBench(policy, sensed=sensed)
@@ -304,7 +311,7 @@ def push_once(
 
 
 def exam_walk(
-    policy: Policy,
+    policy: Brain,
     *,
     distance_m: float = WALK_DISTANCE_M,
     lap: tuple[Segment, ...] = WALK_LAP,
@@ -359,7 +366,7 @@ def mean_errors(results: Sequence[SegmentResult]) -> dict[str, float]:
 
 
 def exam_stairs(
-    policy: Policy, trial: StairsTrial, *, time_s: float = STAIRS_TIME_S, sensed: bool = True
+    policy: Brain, trial: StairsTrial, *, time_s: float = STAIRS_TIME_S, sensed: bool = True
 ) -> StairsResult:
     """从楼梯前面 1 m 开始，慢慢往前走，上去、下来。"""
     stairs = trial.stairs
@@ -419,7 +426,7 @@ class UprightWatch:
 
 
 def exam_get_up(
-    policy: Policy, pose: StartPose, *, deadline_s: float = GET_UP_S, stay_s: float = STAY_UP_S, sensed: bool = True
+    policy: Brain, pose: StartPose, *, deadline_s: float = GET_UP_S, stay_s: float = STAY_UP_S, sensed: bool = True
 ) -> GetUpResult:
     """从躺着开始（跌倒的反射关掉，像小脑层在做起来的动作时那样），命令是站着不动。"""
     bench = PolicyBench(policy, sensed=sensed, start=pose, fall_reflex=False)
@@ -454,9 +461,18 @@ def exam_tasks(items: Sequence[str] = EXAM_ITEMS) -> list[tuple[str, str]]:
     return [(item, part) for item in EXAM_ITEMS if item in items for part in parts[item]]
 
 
-def run_task(contract_path: Path, item: str, part: str):
+def load_brain(reference: str) -> Brain:
+    """考哪一个：sonic 是 NVIDIA 的 SONIC，别的是一份策略的规约（contract.json）的路径。"""
+    return SonicBrain() if reference == SONIC else load_policy(Path(reference))
+
+
+def result_dir(reference: str) -> Path:
+    return RESULTS_DIR / SONIC if reference == SONIC else Path(reference).parent
+
+
+def run_task(reference: str, item: str, part: str):
     """在一个进程里考一份（策略在这个进程里读：ONNX 的会话不能跨进程传）。"""
-    policy = load_policy(contract_path)
+    policy = load_brain(reference)
     if item == "stand":
         return exam_stand(policy)
     if item == "push":
@@ -468,14 +484,15 @@ def run_task(contract_path: Path, item: str, part: str):
     return exam_get_up(policy, StartPose(part))
 
 
-def run_exam(contract_path: Path, items: Sequence[str] = EXAM_ITEMS, workers: int | None = None) -> ExamResult:
+def run_exam(reference: str, items: Sequence[str] = EXAM_ITEMS, workers: int | None = None) -> ExamResult:
     """考一个策略：每一份一个进程，一起考，按题的顺序收起来。"""
-    policy = load_policy(contract_path)
+    policy = load_brain(reference)
     tasks = exam_tasks(items)
-    workers = workers or max(1, min(len(tasks), (os.cpu_count() or 1) - SPARE_CPUS))
+    limit = SONIC_WORKERS if reference == SONIC else (os.cpu_count() or 1) - SPARE_CPUS
+    workers = workers or max(1, min(len(tasks), limit))
     # 用 spawn 开进程：父进程里已经有 ONNX 的线程，fork 出来的子进程可能卡住。
     with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
-        futures = [pool.submit(run_task, contract_path, item, part) for item, part in tasks]
+        futures = [pool.submit(run_task, reference, item, part) for item, part in tasks]
         results = [future.result() for future in futures]
     found = {
         item: [result for (task_item, _), result in zip(tasks, results, strict=True) if task_item == item]
@@ -586,12 +603,13 @@ def walk_table(walk: WalkResult) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("contract", type=Path, help="策略的规约（contract.json）")
+    parser.add_argument("brain", help="策略的规约（contract.json）的路径，或者 sonic")
     parser.add_argument("--items", nargs="+", choices=EXAM_ITEMS, default=list(EXAM_ITEMS), help="只考这几道题")
     parser.add_argument("--workers", type=int, default=None, help="最多同时开几个进程")
     arguments = parser.parse_args()
-    exam = run_exam(arguments.contract, arguments.items, arguments.workers)
-    output = arguments.contract.parent / EXAM_RESULT_NAME
+    exam = run_exam(arguments.brain, arguments.items, arguments.workers)
+    output = result_dir(arguments.brain) / EXAM_RESULT_NAME
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(asdict(exam), ensure_ascii=False, indent=2), encoding="utf-8")
     print(describe(exam))
     print(f"写进了 {output}")

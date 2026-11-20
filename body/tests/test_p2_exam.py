@@ -237,7 +237,7 @@ def test_the_exam_has_every_part_once_with_the_stand_first():
 def test_the_exam_is_taken_with_what_the_body_feels():
     """考试时策略看身体自己感觉到的：测试台不认识的身体（测试用的小身体）就考不了。"""
     with pytest.raises(ValueError, match="做不了状态估计"):
-        run_task(FIXTURE_DIR / "contract.json", "get_up", StartPose.PRONE.value)
+        run_task(str(FIXTURE_DIR / "contract.json"), "get_up", StartPose.PRONE.value)
 
 
 def test_the_report_has_every_item_and_writes_a_dash_for_what_was_not_measured():

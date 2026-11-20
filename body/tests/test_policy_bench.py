@@ -18,6 +18,7 @@ from nova_body.policy_bench import (
     STILL,
     PolicyBench,
     StartPose,
+    default_positions,
     load_policy_body,
     lowest_point_m,
     start_data,
@@ -49,7 +50,7 @@ def test_the_policy_body_gets_the_bench_settings_and_floor(policy):
 def test_the_start_is_the_default_pose_just_above_the_floor(policy):
     """站着开始：关节在默认的姿势，最低的一点比地面高 1 厘米，没有歪。"""
     model = load_policy_body(policy)
-    data = start_data(model, policy)
+    data = start_data(model, default_positions(policy))
     assert lowest_point_m(model, data) == pytest.approx(START_CLEARANCE_M, abs=1e-9)
     for joint in policy.joints:
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint.name)
@@ -69,7 +70,7 @@ def test_the_start_is_the_default_pose_just_above_the_floor(policy):
 def test_lying_starts_turn_the_pelvis_and_rest_just_above_the_floor(policy, pose, axis, points_up):
     """躺着开始：骨盆横过来（歪 90°），头朝 +x，该朝上的朝上；最低的一点也比地面高 1 厘米。"""
     model = load_policy_body(policy)
-    data = start_data(model, policy, pose)
+    data = start_data(model, default_positions(policy), pose)
     rotation = data.xmat[1].reshape(3, 3)
     assert rotation[2, 2] == pytest.approx(0.0, abs=1e-9)
     assert rotation[0, 2] == pytest.approx(1.0)
@@ -80,7 +81,7 @@ def test_lying_starts_turn_the_pelvis_and_rest_just_above_the_floor(policy, pose
 def test_the_start_can_be_moved_along_x(policy):
     """可以在 x 的别处开始（比如楼梯前面）。"""
     model = load_policy_body(policy)
-    assert start_data(model, policy, x_m=-2.0).xpos[1][0] == pytest.approx(-2.0)
+    assert start_data(model, default_positions(policy), x_m=-2.0).xpos[1][0] == pytest.approx(-2.0)
 
 
 def test_stairs_go_up_to_a_landing_and_down_again():
