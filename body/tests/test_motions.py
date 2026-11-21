@@ -7,10 +7,14 @@ import pytest
 from nova_body.body import Region, Side
 from nova_body.ik import HARD, SOFT
 from nova_body.motions import (
+    BOX_FRONT_OF_TOES_M,
+    BOX_HALF_WIDTH_M,
+    BOX_REACH_S,
     DT,
     HOLD_S,
     LEAN_MARGIN_M,
     PUSH_UP_DEPTH_M,
+    SQUAT_CENTER_BACK_M,
     SQUAT_CENTER_RATIO,
     SQUAT_DOWN_S,
     STAIR_RISER_M,
@@ -21,6 +25,7 @@ from nova_body.motions import (
     _foot_turn_weight,
     _quintic,
 )
+from nova_body.strength import self_contacts
 
 UP = 2
 
@@ -90,11 +95,13 @@ def test_lean_moves_the_weight_to_the_toes_and_back(builder):
 
 
 def test_squat_goes_down_to_half_height_leaning_forward_with_the_arms_still(builder):
-    """蹲到底：重心降到站着时的一半，上身往前倾；只用腿的动作，手臂一点不动；最后站回来。"""
+    """蹲到底：重心降到站着时的一半、往后 3 cm，上身往前倾；只用腿的动作，手臂一点不动；身体不插到一起；最后站回来。"""
     motion = builder.squat("squat", "蹲", "")
     assert motion.feasible
     bottom = frame_at(motion, HOLD_S + SQUAT_DOWN_S).qpos
     assert center_of(builder, bottom)[UP] == pytest.approx(SQUAT_CENTER_RATIO * builder.center[UP], abs=0.01)
+    assert center_of(builder, bottom)[0] == pytest.approx(builder.center[0] - SQUAT_CENTER_BACK_M, abs=0.01)
+    assert self_contacts(builder.body, [frame.qpos for frame in motion.frames]) == {}
     trunk = mujoco.MjData(builder.model)
     trunk.qpos[:] = bottom
     mujoco.mj_kinematics(builder.model, trunk)
@@ -145,9 +152,11 @@ def test_walk_needs_at_least_two_steps(builder):
 
 @pytest.mark.parametrize("up", [True, False], ids=["上楼", "下楼"])
 def test_two_stairs_end_on_the_step_with_the_weight_between_the_feet(builder, up):
-    """上（下）两级考场的楼梯（一级 20 cm）：做得出来；最后两只脚都在第二级上，重心在两只脚中间的上面。"""
+    """上（下）两级考场的楼梯（一级 20 cm）：做得出来，身体不插到一起；
+    最后两只脚都在第二级上，重心在两只脚中间的上面。"""
     motion = builder.stairs("stairs", "楼梯", up=up, description="", steps=2)
     assert motion.feasible
+    assert self_contacts(builder.body, [frame.qpos for frame in motion.frames]) == {}, "抬起来的腿碰到手，手臂要让开"
     data = mujoco.MjData(builder.model)
     data.qpos[:] = motion.frames[-1].qpos
     mujoco.mj_kinematics(builder.model, data)
@@ -176,6 +185,22 @@ def test_door_pull_leans_the_body_back(builders):
     pulled = center_of(builder, motion.frames[-1].qpos)
     expected = 50.0 * 1.0 / (builder.ik.mass * 9.81)
     assert builder.center[0] - pulled[0] == pytest.approx(expected, rel=0.1)
+
+
+def test_lifting_a_box_reaches_in_front_of_the_thighs_first(builders):
+    """搬箱子：做得出来，身体不插到一起；伸手的路上手先到把手的前后、左右（在大腿前面），再往下；两只手隔 40 cm。"""
+    builder = builders["Nova"]
+    motion = builder.lift_box("box", "搬", "")
+    assert motion.feasible
+    assert self_contacts(builder.body, [frame.qpos for frame in motion.frames]) == {}
+    data = mujoco.MjData(builder.model)
+    data.qpos[:] = frame_at(motion, BOX_REACH_S).qpos
+    mujoco.mj_kinematics(builder.model, data)
+    toe = max(toe[0] for toe in builder._toe_positions())
+    for side in Side:
+        palm = data.site_xpos[builder.model.site(builder.anatomy.palms[side]).id]
+        expected_y = BOX_HALF_WIDTH_M if side is Side.LEFT else -BOX_HALF_WIDTH_M
+        assert palm[:UP] == pytest.approx([toe + BOX_FRONT_OF_TOES_M, expected_y], abs=5e-3)
 
 
 def test_push_up_from_the_knees_rests_on_knees_and_hands(builders):

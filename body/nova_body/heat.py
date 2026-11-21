@@ -40,7 +40,11 @@ class Moment(StrEnum):
     """保持一个动作里的哪一刻。"""
 
     LAST = "最后一刻"
-    HARDEST = "最费力的一刻"
+    HARDEST = "停着的时候最费力的一刻"
+
+
+# 关节都比这个转得慢的帧算停着（保持只能是停着的姿势）。
+STILL_SPEED_RAD_S = 0.01
 
 
 @dataclass(frozen=True)
@@ -195,8 +199,14 @@ def held_blocks(series: MotionSeries, moment: Moment, motors: Sequence[Motor], s
 
 
 def _hardest_frame(series: MotionSeries) -> int:
-    """全身的力矩的平方加起来最大的那一帧（蹲到底的那一刻）。"""
-    return int(np.argmax(np.sum(series.torques_nm**2, axis=1)))
+    """停着（关节都几乎不转）的帧里，全身的力矩的平方加起来最大的那一帧（蹲到底停住的时候）。
+    保持只能是停着的姿势：动起来那一刻的力矩里有加速要的力，不能一直保持（原来取全部帧里最大的，
+    取到的是蹲起来的半路上，2.3 以前查出来的）。"""
+    still = np.all(np.abs(series.speeds_rad_s) < STILL_SPEED_RAD_S, axis=1)
+    if not still.any():
+        raise ValueError("这个动作里没有停着的时候，保持不了")
+    load = np.where(still, np.sum(series.torques_nm**2, axis=1), -np.inf)
+    return int(np.argmax(load))
 
 
 def _with_friction(motor: Motor, series: MotionSeries) -> np.ndarray:

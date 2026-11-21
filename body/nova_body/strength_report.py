@@ -251,12 +251,11 @@ def _self_contact_paragraph(demands: list[MotionDemand]) -> str:
         (first, second), depth = max(demand.self_contacts_m.items(), key=lambda item: item[1])
         found.append(f"{demand.name}（{_link_label(first)}碰到{_link_label(second)}，最深 {depth * MM_PER_M:.0f} mm）")
     if not found:
-        return "**身体自己插到一起的地方**：没有。"
+        return "**身体自己插到一起的地方**：没有（逆运动学躲开自己，2.3 步以前加的）。"
     return (
-        "**身体自己插到一起的地方**（身体各段之间的碰撞是 1.6 步打开的）：逆运动学还不躲开自己，"
-        "这几个动作里有两段插到了一起："
+        "**身体自己插到一起的地方**：逆运动学躲开自己，这几个动作里还是有两段插到了一起（躲不开，动作要改）："
         + "；".join(found)
-        + "。逆动力学不算这些接触，所以力矩是按插着算的（蹲到底时胸压着大腿，其实还能省一点力）。P2 让动作躲开自己。"
+        + "。逆动力学不算这些接触，所以力矩是按插着算的。"
     )
 
 

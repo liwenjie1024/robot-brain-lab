@@ -4,8 +4,12 @@
 做法是加了权重的最小二乘，一步步逼近：要求紧的（脚踩在哪）权重大，要求松的（躯干正不正）权重小，
 再轻轻地拉向一个参照的姿势（站姿），这样没说到的关节不会乱跑。
 一个动作的每一帧都从上一帧的解开始算，所以算出来的动作是连续的。手指不动，停在参照的姿势上。
+身体的两段（会碰撞的）不让离得太近（躲开自己），和脚踩在哪一样硬：身体穿不过自己。和关节的范围一样是单边的边：
+每一步先照别的要求解，会让哪两段离得太近，就加上"停在边上"再解一遍；离得够远的不拉不推。
+有的部分可以"只为躲开才动"（只用腿的动作里的手臂）：别的要求都不用它们，腿碰到它们时才让开。
 """
 
+import copy
 import math
 from dataclasses import dataclass
 
@@ -34,9 +38,18 @@ MAX_ITERATIONS = 80
 STEP_TOLERANCE = 1.0e-10
 # 关节离范围的边不到这么多（弧度），就算顶在边上了。
 AT_LIMIT_RAD = 1.0e-9
+# 躲开自己：身体的两段（会碰撞的，并且逆运动学动得开的：同一只手的手指之间不算）离得不到 SELF_CLEARANCE_M，
+# 就加一项把它们停在这里（权重 SELF_WEIGHT）。只防插进去，留一点余地：留 8 mm 时 G1 蹲不下去了。
+# 离得不到 SELF_WATCH_M 的都看着：推出去以后还看得见，下一步就不会被别的要求拉回去（不看着的话会来回弹，解不完）。
+SELF_CLEARANCE_M = 0.003
+SELF_WATCH_M = 0.01
+SELF_WEIGHT = HARD
+# 预计离得比边近这么多以内的不管（解方程的误差）。
+SELF_TOLERANCE_M = 1.0e-5
 FREE_JOINT_DOF = 6
 POSITION = 3
 ROTATION = 3
+WORLD_BODY = 0
 
 
 class IkError(RuntimeError):
@@ -95,19 +108,29 @@ class Goals:
 
 @dataclass(frozen=True)
 class IkResult:
-    """解出来的姿势，和离要求还差多少：点的位置最多差多少米、重心差多少米。"""
+    """解出来的姿势，和离要求还差多少：点的位置最多差多少米、重心差多少米；
+    身体的两段（会动得开的）最近离多远（负的是插进去了；都离得比 SELF_WATCH_M 远是 inf）。"""
 
     qpos: np.ndarray
     point_error_m: float
     center_of_mass_error_m: float
     iterations: int
+    closest_self_m: float = math.inf
 
 
 class WholeBodyIk:
     """一个身体的全身逆运动学。"""
 
-    def __init__(self, body: Body, reference_qpos: np.ndarray, *, moving: frozenset[Region] | None = None) -> None:
-        """moving 是会动的那几部分（None 是手以外的全部）。别的关节不动，停在 solve 开始时给的角度上。"""
+    def __init__(
+        self,
+        body: Body,
+        reference_qpos: np.ndarray,
+        *,
+        moving: frozenset[Region] | None = None,
+        dodging: frozenset[Region] = frozenset(),
+    ) -> None:
+        """moving 是会动的那几部分（None 是手以外的全部），dodging 是只为躲开身体别的段才动的那几部分。
+        别的关节不动，停在 solve 开始时给的角度上。"""
         model = body.model
         self.model = model
         self.data = mujoco.MjData(model)
@@ -116,10 +139,13 @@ class WholeBodyIk:
         if root_joint < 0 or model.jnt_type[root_joint] != mujoco.mjtJoint.mjJNT_FREE:
             raise IkError(f"{body.anatomy.root} 没有自由关节，不能做全身的逆运动学")
         free = int(model.jnt_dofadr[root_joint])
-        regions = moving if moving is not None else frozenset(Region) - {Region.HAND}
+        regions = (moving if moving is not None else frozenset(Region) - {Region.HAND}) - dodging
         driven = [joint for joint in body.joints if joint.region in regions]
-        joints = [model.joint(joint.name) for joint in driven]
+        dodgers = [joint for joint in body.joints if joint.region in dodging]
+        joints = [model.joint(joint.name) for joint in [*driven, *dodgers]]
         self.active = np.array([*range(free, free + FREE_JOINT_DOF), *(int(joint.dofadr[0]) for joint in joints)])
+        # 只为躲开才动的关节：在会动的自由度里排在最后。
+        self.dodge_dofs = np.arange(FREE_JOINT_DOF + len(driven), len(self.active))
         # 参照的姿势只拉关节（不拉骨盆在哪），每个关节在 qpos 里的位置。
         self.posture_dofs = np.arange(FREE_JOINT_DOF, len(self.active))
         self.posture_qpos = np.array([int(joint.qposadr[0]) for joint in joints])
@@ -133,6 +159,13 @@ class WholeBodyIk:
         self.mass = float(model.body_subtreemass[self.root])
         self._jacp = np.zeros((POSITION, model.nv))
         self._jacr = np.zeros((ROTATION, model.nv))
+        self._jac_first = np.zeros((POSITION, model.nv))
+        self._jac_second = np.zeros((POSITION, model.nv))
+        # 找离得近的两段用一份自己的模型：身体的形状的边距放到 SELF_WATCH_M，MuJoCo 就把离得这么近的也报出来。
+        self._rigid_group = self._rigid_groups([joint.id for joint in joints])
+        self._collision_model = copy.deepcopy(model)
+        self._collision_model.geom_margin[model.geom_bodyid != WORLD_BODY] = SELF_WATCH_M
+        self._collision_data = mujoco.MjData(self._collision_model)
 
     def solve(self, goals: Goals, start_qpos: np.ndarray) -> IkResult:
         """从 start_qpos 出发，找满足 goals 的姿势。"""
@@ -146,7 +179,7 @@ class WholeBodyIk:
             mujoco.mj_kinematics(model, data)
             mujoco.mj_comPos(model, data)
             hessian, gradient = self._normal_equations(goals, qpos)
-            change = self._step_within_limits(hessian, gradient, qpos)
+            change = self._step_within_limits(hessian, gradient, qpos, self._close_pairs(qpos))
             size = float(np.abs(change).max())
             if size > MAX_STEP_RAD:
                 change *= MAX_STEP_RAD / size
@@ -165,17 +198,30 @@ class WholeBodyIk:
             point_error_m=max((self._point_error(goal) for goal in goals.points), default=0.0),
             center_of_mass_error_m=self._center_of_mass_error(goals),
             iterations=iterations,
+            closest_self_m=min((distance for distance, _, _ in self._close_pairs(qpos)), default=math.inf),
         )
 
     def center_of_mass(self, carried: tuple[CarriedMass, ...] = ()) -> np.ndarray:
         """现在（上一次 solve 以后）身体加上手里东西的重心。"""
         return self._system_center(carried)[0]
 
-    def _step_within_limits(self, hessian: np.ndarray, gradient: np.ndarray, qpos: np.ndarray) -> np.ndarray:
-        """解这一步。已经顶在范围的边上、还要往外转的关节冻住不动，让别的关节去补，再解一遍。"""
+    def _step_within_limits(
+        self,
+        hessian: np.ndarray,
+        gradient: np.ndarray,
+        qpos: np.ndarray,
+        pairs: list[tuple[float, np.ndarray, tuple[str, str]]],
+    ) -> np.ndarray:
+        """解这一步，守住两种边，有新碰到的边就再解一遍：
+        已经顶在范围的边上、还要往外转的关节冻住不动，让别的关节去补；
+        这一步会让两段身体离得不到 SELF_CLEARANCE_M 的，加一项把它们停在 SELF_CLEARANCE_M
+        （只为躲开才动的关节也用上）。"""
+        hessian, gradient = hessian.copy(), gradient.copy()
         free = np.ones(len(gradient), dtype=bool)
+        held = np.zeros(len(pairs), dtype=bool)
+        rows = [jacobian[self.active] for _, jacobian, _ in pairs]
         change = np.zeros(len(gradient))
-        for _ in range(len(self.limits) + 1):
+        for _ in range(len(self.limits) + len(pairs) + 1):
             change[:] = 0.0
             change[free] = np.linalg.solve(hessian[np.ix_(free, free)], gradient[free])
             stuck = [
@@ -187,9 +233,18 @@ class WholeBodyIk:
                     or (qpos[address] >= high - AT_LIMIT_RAD and change[index] > 0)
                 )
             ]
-            if not stuck:
+            closing = [
+                index
+                for index, (distance, _, _) in enumerate(pairs)
+                if not held[index] and distance + rows[index] @ change < SELF_CLEARANCE_M - SELF_TOLERANCE_M
+            ]
+            if not stuck and not closing:
                 break
             free[stuck] = False
+            for index in closing:
+                held[index] = True
+                hessian += SELF_WEIGHT * np.outer(rows[index], rows[index])
+                gradient += SELF_WEIGHT * rows[index] * (SELF_CLEARANCE_M - pairs[index][0])
         return change
 
     # 拼方程 -----------------------------------------------------------------------------------------
@@ -201,8 +256,10 @@ class WholeBodyIk:
         gradient = np.zeros(size)
 
         def add(jacobian: np.ndarray, error: np.ndarray, weight: float) -> None:
+            """加一项要求。只为躲开才动的关节不用（躲开自己在 _step_within_limits 里加）。"""
             nonlocal hessian, gradient
             local = jacobian[:, self.active]
+            local[:, self.dodge_dofs] = 0.0
             hessian += weight * local.T @ local
             gradient += weight * local.T @ error
 
@@ -240,6 +297,42 @@ class WholeBodyIk:
                 hessian[index, index] += LIMIT_WEIGHT
                 gradient[index] -= LIMIT_WEIGHT * near_high
         return hessian, gradient
+
+    def _close_pairs(self, qpos: np.ndarray) -> list[tuple[float, np.ndarray, tuple[str, str]]]:
+        """离得不到 SELF_WATCH_M 的两段身体（会动得开的）：多远（负的是插进去了）、这个距离对关节的雅可比、是哪两段。
+        要 self.data 已经是 qpos 这个姿势（算过 mj_kinematics、mj_comPos）。"""
+        model, data = self._collision_model, self._collision_data
+        data.qpos[:] = qpos
+        mujoco.mj_kinematics(model, data)
+        mujoco.mj_collision(model, data)
+        contacts = data.contact
+        bodies = model.geom_bodyid[contacts.geom]
+        groups = self._rigid_group[bodies]
+        close = (bodies != WORLD_BODY).all(axis=1) & (groups[:, 0] != groups[:, 1]) & (contacts.dist < SELF_WATCH_M)
+        found = []
+        for index in np.flatnonzero(close):
+            first, second = (int(body) for body in bodies[index])
+            distance = float(contacts.dist[index])
+            # 法向从第一个形状指向第二个；两个表面上最近的点在接触点两边各半个距离。
+            normal = contacts.frame[index, :POSITION]
+            half = 0.5 * distance * normal
+            mujoco.mj_jac(self.model, self.data, self._jac_first, None, contacts.pos[index] - half, first)
+            mujoco.mj_jac(self.model, self.data, self._jac_second, None, contacts.pos[index] + half, second)
+            names = (model.body(first).name, model.body(second).name)
+            found.append((distance, normal @ (self._jac_second - self._jac_first), names))
+        return found
+
+    def _rigid_groups(self, moving_joints: list[int]) -> np.ndarray:
+        """每一段身体跟着哪一段一起动：往上找到第一个有会动的关节的段（骨盆算）。同一组的两段之间的距离逆运动学改不了。"""
+        model = self.model
+        movers = {self.root, *(int(model.jnt_bodyid[joint]) for joint in moving_joints)}
+        group = np.zeros(model.nbody, dtype=int)
+        for body in range(model.nbody):
+            mover = body
+            while mover not in movers and mover != WORLD_BODY:
+                mover = int(model.body_parentid[mover])
+            group[body] = mover
+        return group
 
     def _system_center(self, carried: tuple[CarriedMass, ...]) -> tuple[np.ndarray, np.ndarray]:
         """身体加上手里东西的重心，和它的雅可比矩阵。"""

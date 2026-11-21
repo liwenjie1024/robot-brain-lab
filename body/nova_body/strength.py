@@ -82,7 +82,7 @@ MOTIONS: tuple[MotionEntry, ...] = (
     MotionEntry(
         "squat",
         "蹲到底再站起",
-        "重心降到站着时的一半，脚跟不离地",
+        "重心降到站着时的一半（最低时往后 3 cm），脚跟不离地",
         Uses.LEGS,
         lambda builder, entry: builder.squat(entry.key, entry.name, entry.description),
     ),
@@ -96,7 +96,7 @@ MOTIONS: tuple[MotionEntry, ...] = (
     MotionEntry(
         "lift_box",
         "从地上搬箱子",
-        "10 kg 的箱子，把手离地 20 cm，搬起来端在身前",
+        "10 kg 的箱子，把手离地 20 cm、隔 40 cm，搬起来端在身前",
         Uses.HANDS,
         lambda builder, entry: builder.lift_box(entry.key, entry.name, entry.description),
     ),
@@ -186,7 +186,7 @@ class MotionDemand:
     shared_nm 是并联的每一对关节（按关节的名字）：同一刻两个力矩的绝对值之和的一半，最大是多少。
     edge_margin_m：脚底的压力中心离边最近的时候还有多远；friction_ratio：要的摩擦最大是多少（地面按 0.6 算）。
     series 是每一帧的力矩和转速（做不出来的动作是 None）。
-    self_contacts_m 是动作里身体的哪两段插到了一起、最深插进去多少米（逆运动学还不躲开自己）。
+    self_contacts_m 是动作里身体的哪两段插到了一起、最深插进去多少米（逆运动学躲开自己，应该是空的）。
     """
 
     key: str

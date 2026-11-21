@@ -99,13 +99,21 @@ SQUAT_CENTER_RATIO = 0.5
 # 免得逆运动学走到"往后仰着蹲"那一边去（那样站不稳，可是一开始两边差不多，它分不清）。
 SQUAT_TRUNK_LEAN_DEG = 40.0
 SQUAT_PELVIS_LEAN_DEG = 15.0
+# 蹲到最低时重心在两只脚中间往后这么多（人蹲到底重心也偏后）。踝弯到头（Nova 45°）以后，重心要正好在中间，
+# 上身就得更往前倾，胸压到大腿上（1.6 步打开身体各段之间的碰撞时，胸插进大腿 21 mm）。往后 3 cm 离脚跟还有约 10 cm，
+# 压力中心离脚的边 47 mm。试过让膝盖往外分（上身落在两条大腿中间），逆运动学找不到那个姿势。
+SQUAT_CENTER_BACK_M = 0.03
 SQUAT_DOWN_S = 1.5
 SQUAT_HOLD_S = 0.5
-# 搬箱子：箱子 10 kg、30 cm 高，把手离地 20 cm，在脚尖前面 10 cm，两只手隔 32 cm；端着的时候在重心前面 30 cm。
+# 搬箱子：箱子 10 kg、30 cm 高，把手离地 20 cm，在脚尖前面 10 cm，两只手隔 40 cm（常见的纸箱那么宽）；
+# 端着的时候在重心前面 30 cm。原来两只手隔 32 cm，比 Nova 两条大腿的外侧还窄，站起来时大腿扫到手
+# （1.6 步打开身体各段之间的碰撞时，前臂插进大腿 26 mm）。
 BOX_KG = 10.0
 BOX_HANDLE_HEIGHT_M = 0.20
 BOX_FRONT_OF_TOES_M = 0.10
-BOX_HALF_WIDTH_M = 0.16
+BOX_HALF_WIDTH_M = 0.20
+# 伸手先往前到这一刻，再往下到把手（2.1 秒）。早了腰弯得太快（1.0 秒时腰前后要 1.7 rad/s），1.4 秒时和原来差不多。
+BOX_REACH_S = 1.4
 CARRY_FORWARD_M = 0.30
 CARRY_HEIGHT_OF_BODY = 0.56
 CARRY_WALK_SPEED = 0.8
@@ -153,7 +161,9 @@ KEY_STEPS = 30
 KEY_POSTURE_WEIGHT = 0.1
 # 只用腿的动作（走、上下楼、蹲、倾、跳）里会动的部分：手臂和头不动，停在站姿上。
 # 不这样的话，腿一时够不着要的姿势，逆运动学就在一帧里甩手臂、仰头去凑重心，算出来的力矩是假的。
+# 手臂只为躲开才动：上楼时抬起来的大腿会碰到垂着的手（G1 的腕插进髋 31 mm），这时手臂让开，别的时候不动。
 LEGS_AND_TRUNK = frozenset({Region.LEG, Region.WAIST})
+DODGING_ARMS = frozenset({Region.ARM})
 # 从大概的姿势摆准，逆运动学解几遍。
 SETTLE_ROUNDS = 6
 
@@ -229,7 +239,7 @@ class MotionBuilder:
         self.model = body.model
         self.stand = np.array(body.stand.qpos)
         self.ik = WholeBodyIk(body, self.stand)
-        self.leg_ik = WholeBodyIk(body, self.stand, moving=LEGS_AND_TRUNK)
+        self.leg_ik = WholeBodyIk(body, self.stand, moving=LEGS_AND_TRUNK, dodging=DODGING_ARMS)
         self.dynamics = InverseDynamics(body)
         data = mujoco.MjData(self.model)
         data.qpos[:] = self.stand
@@ -366,6 +376,7 @@ class MotionBuilder:
         """
         low = self.center.copy()
         low[UP] = SQUAT_CENTER_RATIO * self.center[UP]
+        low[0] -= SQUAT_CENTER_BACK_M
         bottom = HOLD_S + SQUAT_DOWN_S
         track = Track(
             [
@@ -478,12 +489,17 @@ class MotionBuilder:
             side: np.array([toe + BOX_FRONT_OF_TOES_M, _sign(side) * BOX_HALF_WIDTH_M, BOX_HANDLE_HEIGHT_M])
             for side in Side
         }
+        # 伸手的路上先往前（到把手的前后、左右，高度在一半），再往下：直着从身体两边伸到把手，手指会从大腿里穿过去。
+        reach = {
+            side: np.array([*handles[side][:UP], (self.palms[side][UP] + BOX_HANDLE_HEIGHT_M) / 2]) for side in Side
+        }
         carry = self._carry_positions()
         tracks = {
             side: Track(
                 [
                     (0.0, self.palms[side]),
                     (0.3, self.palms[side]),
+                    (BOX_REACH_S, reach[side]),
                     (2.1, handles[side]),
                     (2.5, handles[side]),
                     (4.3, carry[side]),

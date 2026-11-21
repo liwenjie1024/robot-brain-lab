@@ -8,6 +8,8 @@ from nova_body.body import Region, Side
 from nova_body.ik import (
     HARD,
     POSTURE,
+    SELF_CLEARANCE_M,
+    SELF_WATCH_M,
     AttitudeGoal,
     CarriedMass,
     Goals,
@@ -98,6 +100,24 @@ def test_joint_limits_are_never_exceeded(body):
     assert result.center_of_mass_error_m > 0.05
 
 
+def test_parts_that_are_close_but_clear_are_watched_and_left_alone(g1):
+    """G1 站着时肘和腕离 9.5 mm：在看着的范围（SELF_WATCH_M）里，但离得比边（SELF_CLEARANCE_M）远，不推开，还是站姿。"""
+    placed = Placed(g1, stand(g1))
+    goals = Goals(points=feet_goals(g1, placed), center_of_mass=placed.center)
+    result = WholeBodyIk(g1, stand(g1)).solve(goals, stand(g1))
+    assert SELF_CLEARANCE_M < result.closest_self_m < SELF_WATCH_M
+    assert result.closest_self_m == pytest.approx(0.0095, abs=5e-4)
+    assert np.abs(result.qpos[7:] - stand(g1)[7:]).max() < 1e-3
+
+
+def test_nothing_is_close_when_nova_stands(nova):
+    """Nova 站着时，会动得开的两段最近的是两条大腿（20 mm），都不在看着的范围里（同一只手的手指之间不算）。"""
+    body = nova.body
+    placed = Placed(body, stand(body))
+    goals = Goals(points=feet_goals(body, placed), center_of_mass=placed.center)
+    assert WholeBodyIk(body, stand(body)).solve(goals, stand(body)).closest_self_m == math.inf
+
+
 def test_carried_mass_counts_in_the_center_of_mass(nova):
     """手里拿着东西，重心往手那边挪：挪的量 = 东西的质量 x 到手的距离 ÷ 总质量。"""
     body = nova.body
@@ -124,6 +144,19 @@ def test_joints_outside_the_moving_regions_stay_where_they_were(nova):
     for region in (Region.ARM, Region.NECK):
         assert driven_angles(body, result.qpos, region) == pytest.approx(driven_angles(body, stand(body), region))
     assert driven_angles(body, result.qpos, Region.LEG) != pytest.approx(driven_angles(body, stand(body), Region.LEG))
+
+
+def test_dodging_arms_do_not_help_with_the_center_of_mass(nova):
+    """只用腿和躯干、手臂只为躲开才动：重心要往前挪 6 cm，手臂也不帮着凑（没碰到它们，它们就不动），
+    解出来和根本不让手臂动的一样。"""
+    body = nova.body
+    placed = Placed(body, stand(body))
+    goals = Goals(points=feet_goals(body, placed), center_of_mass=placed.center + np.array([0.06, 0.0, 0.0]))
+    legs = frozenset({Region.LEG, Region.WAIST})
+    dodging = WholeBodyIk(body, stand(body), moving=legs, dodging=frozenset({Region.ARM})).solve(goals, stand(body))
+    fixed = WholeBodyIk(body, stand(body), moving=legs).solve(goals, stand(body))
+    assert driven_angles(body, dodging.qpos, Region.ARM) == pytest.approx(driven_angles(body, stand(body), Region.ARM))
+    assert dodging.qpos == pytest.approx(fixed.qpos, abs=1e-9)
 
 
 def test_weak_rotation_weight_lets_the_foot_stay_flat(nova):

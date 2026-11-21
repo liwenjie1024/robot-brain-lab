@@ -140,17 +140,35 @@ def test_moving_adds_the_drives_own_friction(nova, motors):
 
 
 def test_holding_picks_the_last_or_the_hardest_frame(nova, motors):
-    """一直保持：最后一刻，或者全身最费力的那一刻；不动，所以没有摩擦。"""
+    """一直保持：最后一刻，或者停着的时候全身最费力的那一刻；不动，所以没有摩擦。"""
     torque = np.zeros((3, len(nova.body.joints)))
     knee = joint_index(nova, "left_knee")
     torque[:, knee] = [5.0, 50.0, 7.0]
-    motion = MotionSeries(DT, torque, np.ones_like(torque))
+    motion = MotionSeries(DT, torque, np.zeros_like(torque))
     column = motors.index(motor(motors, "left_knee"))
     last = held_blocks(motion, Moment.LAST, motors, 2.0)
     hardest = held_blocks(motion, Moment.HARDEST, motors, 2.0)
     assert last.mean_square_nm2[0, column] == pytest.approx(49.0)
     assert hardest.mean_square_nm2[0, column] == pytest.approx(2500.0)
     assert hardest.duration_s == pytest.approx(2.0)
+
+
+def test_holding_skips_the_moments_when_the_body_moves(nova, motors):
+    """保持只取停着的帧：动着的那一刻（站起来的半路上）力矩再大也不取，那里面有加速要的力。"""
+    torque = np.zeros((4, len(nova.body.joints)))
+    speed = np.zeros_like(torque)
+    knee = joint_index(nova, "left_knee")
+    torque[:, knee] = [5.0, 30.0, 90.0, 7.0]
+    speed[2, knee] = 0.5
+    hold = held_blocks(MotionSeries(DT, torque, speed), Moment.HARDEST, motors, 2.0)
+    assert hold.mean_square_nm2[0, motors.index(motor(motors, "left_knee"))] == pytest.approx(900.0)
+
+
+def test_a_motion_that_never_stops_cannot_be_held(nova, motors):
+    """一直在动的动作没有能保持的姿势：说清楚，不随便取一帧。"""
+    torque = np.ones((3, len(nova.body.joints)))
+    with pytest.raises(ValueError, match="没有停着的时候"):
+        held_blocks(MotionSeries(DT, torque, np.ones_like(torque)), Moment.HARDEST, motors, 2.0)
 
 
 def test_a_cycle_is_exactly_ten_minutes(nova, motors):
