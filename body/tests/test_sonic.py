@@ -154,6 +154,24 @@ def test_when_to_replan():
     assert needs_replan(walking, walking, time_to_replan=True)
 
 
+@pytest.mark.parametrize(
+    ("command", "refused"),
+    [
+        ({**STILL, "lin_vel_x": 2.0}, False),
+        ({**STILL, "lin_vel_x": 3.0}, False),
+        ({**STILL, "lin_vel_x": 2.5, "lin_vel_y": 2.0}, True),
+        ({**STILL, "lin_vel_x": -3.5}, True),
+    ],
+    ids=["跑", "正好是最快", "斜着比最快还快", "往后比最快还快"],
+)
+def test_sonic_refuses_speeds_beyond_running(command, refused):
+    """SONIC 最快跑 3 m/s：再快的命令接不了（不剪），说为什么；3 m/s 以内的接得了。"""
+    reason = SonicBrain().refusal(command)
+    assert (reason is not None) == refused
+    if refused:
+        assert "最快跑 3 m/s" in reason
+
+
 def test_the_encoder_input_is_laid_out_like_the_observation_config():
     """编码器的输入一共 1762 个数；G1 模式要的几项在照设置文件排出来的位置上。"""
     assert ENCODER_SIZE == 1762

@@ -1,13 +1,16 @@
-"""训练这边小工具的测试：显卡能用、显卡和 CPU 算的一样；训练时只关掉"解的次数用完了"的提醒；
+"""训练这边小工具的测试：显卡能用、显卡和 CPU 算的一样；训练、播放时只关掉"解的次数用完了"的提醒；
 测试用的小策略提交进仓库的和现在做出来的一模一样。"""
 
 from pathlib import Path
 
 import mujoco_warp as mjw
 from mjlab.sim.sim import SimulationCfg
+from mjlab.tasks.registry import list_tasks
 
 from nova_train.fixtures import PLAIN, SCAN, fixture_files
 from nova_train.gpu import check
+from nova_train.play import main as play_main
+from nova_train.tasks import STAIRS_TASK
 from nova_train.train import EXPECTED_OVERFLOWS, apply_wp_opt_quietly
 
 COMMITTED_FIXTURES = Path("/body/tests/fixtures")
@@ -27,6 +30,12 @@ def test_training_silences_only_the_expected_overflows():
     assert option.warn_overflow & EXPECTED_OVERFLOWS == 0
     for kept in (mjw.OverflowType.NEFC, mjw.OverflowType.BROADPHASE, mjw.OverflowType.NARROWPHASE):
         assert option.warn_overflow & int(kept)
+
+
+def test_the_player_knows_our_tasks():
+    """播放器（nova_train.play）认得我们自己的任务（Nova-…），也认得 mjlab 自带的。"""
+    assert callable(play_main)
+    assert {STAIRS_TASK, "Mjlab-Velocity-Flat-Unitree-G1"} <= set(list_tasks())
 
 
 class SimpleOption:

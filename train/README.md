@@ -32,6 +32,11 @@ docker logs -f nova-train-g1-stairs                          # 看练到哪了�
 docker compose run --rm train python -m nova_train.export_policy Mjlab-Velocity-Flat-Unitree-G1 `
     /results/train/g1_velocity/<那一次训练> --name g1-velocity-flat --body unitree_g1
 
+# 在浏览器里看练出来的策略（mjlab 的网页播放器，http://127.0.0.1:8080）：用最新的一次训练、最新的存档。
+# 面板的 Checkpoints 里换成早一些的存档，看它怎么一步步学会的。看完 docker stop nova-watch（用显卡，训练时不要开）
+.\scripts\watch.ps1
+.\scripts\watch.ps1 -Run 2026-11-18_12-11-09_g1-flat       # 看别的那一次
+
 # 在测试台上（CPU 的 MuJoCo）考：照命令表走一遍，结果写在规约旁边的 walk.json
 docker compose run --rm body python -m nova_body.policy_walk /results/policies/g1-velocity-flat/contract.json
 
@@ -47,6 +52,7 @@ docker compose run --rm -v ./body/tests/fixtures:/fixtures train python -m nova_
 |---|---|
 | `nova_train/gpu.py` | 看显卡能不能用：PyTorch、Warp、MuJoCo Warp 都认得它，显卡和 CPU 算一个方块落地一样 |
 | `nova_train/train.py` | 就是 mjlab 的 train，只关掉"解的次数用完了"的提醒（MuJoCo Warp 3.17 每一步都打印，拖慢显卡） |
+| `nova_train/play.py` | 就是 mjlab 的 play（网页播放器 viser），认得我们的任务，也关掉那个提醒。一般用 `scripts/watch.ps1` |
 | `nova_train/contract.py` | 从训练环境写策略的规约（`contracts/policy`）。规约表达不了的（历史、剪裁、延迟……）导出时就拒绝 |
 | `nova_train/export_policy.py` | 从存档导出 ONNX、身体模型、规约；导出以后比一比 ONNX 和 PyTorch 的动作，一样才交 |
 | `nova_train/nova_warp.py` | Nova 的模型在 MuJoCo Warp 里：站不站得住、每秒多少步、占多少显存 |

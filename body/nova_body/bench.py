@@ -111,8 +111,16 @@ class Stairs:
         return self.steps - int((x - self.top_end_x) // self.tread_m) - 1
 
     def height_at(self, x: float) -> float:
-        """这一点的地面有多高（m）。"""
+        """楼梯上（沿着 x）这一点有多高（m）。"""
         return self.step_at(x) * self.rise_m
+
+    def covers(self, y: float) -> bool:
+        """左右的这一点在楼梯的宽度以内。"""
+        return abs(y) <= self.width_m / 2
+
+    def ground_height(self, x: float, y: float) -> float:
+        """(x, y) 脚下的地面有多高（m）：在楼梯的宽度以内是那一级，外面是地面。"""
+        return self.height_at(x) if self.covers(y) else 0.0
 
     def boxes(self) -> list[tuple[float, float, int]]:
         """楼梯的每一块：从哪到哪（x）、第几级。上去的 steps 块、平台、下去的 steps - 1 块（最后一下踩到地面）。"""

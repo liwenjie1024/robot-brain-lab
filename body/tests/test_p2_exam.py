@@ -34,7 +34,10 @@ from nova_body.p2_exam import (
     merged,
     push_delays_s,
     push_trial,
+    refusals,
+    run_exam,
     run_task,
+    stairs_command,
     stairs_progress,
 )
 from nova_body.policy import load_policy
@@ -314,3 +317,62 @@ def test_a_partial_exam_is_merged_into_the_previous_results():
     assert combined["pushes"][0]["direction"] == "往前"
     assert combined["date"] == "2026-11-21"
     assert merged({**previous, "policy": "别的"}, fresh, ["push"])["stand"] is None
+
+
+def test_items_whose_commands_the_brain_cannot_take_are_found_before_the_exam(policy):
+    """开考前先问：测试用的小策略练到 1 m/s，走的一圈里有 1.1 m/s，走考不了（说为什么）；
+    楼梯（0.3 m/s）、站、推、起来考得了。"""
+    found = refusals(policy)
+    assert list(found) == ["walk"]
+    assert "lin_vel_x = 1.1" in found["walk"]
+    assert refusals(policy, ["stairs", "stand"]) == {}
+
+
+def test_an_item_that_cannot_be_taken_is_not_run():
+    """考不了的题不考（不开进程、不跑仿真），结果里写明为什么，那道题的结果是空的。"""
+    exam = run_exam(str(FIXTURE_DIR / "contract.json"), ["walk"])
+    assert exam.walk is None
+    assert "超出了练过的范围" in exam.refused["walk"]
+
+
+def test_the_report_says_why_an_item_could_not_be_taken():
+    """结果的表里，考不了的题写"考不了"和为什么。"""
+    exam = ExamResult(
+        policy="测试", date="2026-11-21", refused={"walk": "命令 lin_vel_x = 1.1 超出了练过的范围 [-1, 1]"}
+    )
+    assert "| 走 1 公里 | 考不了：命令 lin_vel_x = 1.1 超出了练过的范围 [-1, 1] |" in describe(exam)
+
+
+def test_merging_keeps_the_reasons_of_items_not_taken_again():
+    """补考几道题时：这几道考不了的理由换成新的（这次考得了就去掉），别的题考不了的理由照旧。"""
+    previous = {
+        "policy": "测试",
+        "date": "2026-11-19",
+        "walk": None,
+        "stairs": [],
+        "refused": {"walk": "旧的理由", "stairs": "楼梯的理由"},
+    }
+    fresh = ExamResult(policy="测试", date="2026-11-21", refused={})
+    assert merged(previous, fresh, ["walk"])["refused"] == {"stairs": "楼梯的理由"}
+    fresh = ExamResult(policy="测试", date="2026-11-21", refused={"walk": "新的理由"})
+    assert merged(previous, fresh, ["walk"])["refused"] == {"walk": "新的理由", "stairs": "楼梯的理由"}
+
+
+@pytest.mark.parametrize(
+    ("heading", "turn"),
+    [(0.0, 0.0), (0.4, -0.2), (-0.4, 0.2), (2.0, -0.5), (-2.0, 0.5), (math.pi - 0.1, -0.5), (-math.pi + 0.1, 0.5)],
+    ids=[
+        "朝前",
+        "往左偏了一点",
+        "往右偏了一点",
+        "往左偏了很多（夹到最大）",
+        "往右偏了很多",
+        "快要朝后（往右转回来）",
+        "快要朝后（往左转回来）",
+    ],
+)
+def test_on_the_stairs_the_heading_is_held_like_in_training(heading, turn):
+    """楼梯上像训练时那样把住方向：转的速度 = 0.5 × 朝向差（要朝 +x），最多 ±0.5 rad/s；往前还是 0.3 m/s。"""
+    command = stairs_command(heading)
+    assert command["ang_vel_z"] == pytest.approx(turn)
+    assert (command["lin_vel_x"], command["lin_vel_y"]) == (0.3, 0.0)

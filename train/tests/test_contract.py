@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import jsonschema
 import mujoco
 import pytest
+import torch
 from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
     ACTUATOR_5020,
     ACTUATOR_7520_22,
@@ -169,9 +170,13 @@ def test_a_known_observation_maps_to_its_contract_term():
     assert _contract_term("joint_pos", term_cfg(joint_pos_rel)) == "joint_pos"
 
 
-@pytest.mark.parametrize(("scale", "expected"), [(None, 1.0), (0.2, 0.2), (2, 2.0)], ids=["没有缩放", "小数", "整数"])
+@pytest.mark.parametrize(
+    ("scale", "expected"),
+    [(None, 1.0), (0.2, 0.2), (2, 2.0), (torch.tensor(0.2), 0.2), ((0.5, 0.5, 0.5), 0.5)],
+    ids=["没有缩放", "小数", "整数", "建好环境后的张量", "每一维都一样"],
+)
 def test_a_single_scale_is_kept(scale, expected):
-    """一个数的缩放照写（没有就是 1）。"""
+    """一个数的缩放照写（没有就是 1）；mjlab 建好环境后换成的张量、每一维都一样的，也是一个数。"""
     assert math.isclose(_scalar_scale("height_scan", scale), expected)
 
 
@@ -179,6 +184,8 @@ def test_a_per_dimension_scale_is_refused():
     """每一维不同的缩放，这一版的规约表达不了，拒绝。"""
     with pytest.raises(ExportError, match="每一维的缩放不一样"):
         _scalar_scale("base_lin_vel", (1.0, 2.0, 3.0))
+    with pytest.raises(ExportError, match="每一维的缩放不一样"):
+        _scalar_scale("base_lin_vel", torch.tensor([1.0, 2.0, 3.0]))
 
 
 def height_scan():

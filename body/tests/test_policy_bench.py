@@ -16,6 +16,7 @@ from nova_body.policy import load_policy
 from nova_body.policy_bench import (
     START_CLEARANCE_M,
     STILL,
+    ContractBrain,
     PolicyBench,
     StartPose,
     default_positions,
@@ -226,3 +227,52 @@ def test_feet_and_what_hangs_below_them_are_not_the_body():
     leg = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "leg_a")
     assert feet_and_below(model, ("leg_a",)) == frozenset({leg})
     assert feet_and_below(model, ()) == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("command", "refused"),
+    [
+        (STILL, False),
+        ({**STILL, "lin_vel_x": 1.0}, False),
+        ({**STILL, "lin_vel_x": 1.1}, True),
+        ({**STILL, "ang_vel_z": -0.6}, True),
+        ({"lin_vel_x": 0.5}, True),
+    ],
+    ids=["站着", "正好是练过的最快", "比练过的快", "转得比练过的快", "少了几项"],
+)
+def test_a_trained_policy_refuses_commands_outside_its_training(policy, command, refused):
+    """练出来的策略接不接得了一个命令：练过的范围以内（包括正好在边上）接得了；超出的、少了几项的接不了，说为什么。"""
+    reason = ContractBrain(policy).refusal(command)
+    assert (reason is not None) == refused
+    if refused and "lin_vel_x" in command and command["lin_vel_x"] > 1.0:
+        assert "超出了练过的范围" in reason
+
+
+def test_beside_the_stairs_the_ground_is_the_floor():
+    """楼梯的宽度以内脚下是那一级，走到楼梯旁边脚下就是地面（正好在边上还算楼梯）。"""
+    half = STAIRS.width_m / 2
+    assert STAIRS.ground_height(2.0, 0.0) == pytest.approx(0.6)
+    assert STAIRS.ground_height(2.0, half) == pytest.approx(0.6)
+    assert STAIRS.ground_height(2.0, -half - 0.01) == 0.0
+    assert STAIRS.ground_height(2.0, half + 1.0) == 0.0
+
+
+def test_standing_beside_the_stairs_is_not_a_fall(policy):
+    """站在楼梯旁边的地上（x 在第 3 级那里，y 在楼梯外面）：骨盆从地面算，和站着一样高，没有摔倒。"""
+    bench = PolicyBench(policy, sensed=False, stairs=STAIRS)
+    data = bench.data
+    data.qpos[0] = 2.0
+    data.qpos[1] = STAIRS.width_m
+    mujoco.mj_kinematics(bench.model, data)
+    assert bench.pelvis_height_m() == pytest.approx(bench.standing_height_m)
+    assert not bench.fallen()
+
+
+def test_the_heading_is_the_yaw_of_the_pelvis(policy):
+    """朝向是骨盆的偏航：开始时朝 +x（0）；往左转 30° 就是 +30°。"""
+    bench = PolicyBench(policy, sensed=False)
+    assert bench.heading_rad() == pytest.approx(0.0, abs=1e-9)
+    half = math.radians(30) / 2
+    bench.data.qpos[3:7] = [math.cos(half), 0.0, 0.0, math.sin(half)]
+    mujoco.mj_kinematics(bench.model, bench.data)
+    assert bench.heading_rad() == pytest.approx(math.radians(30))

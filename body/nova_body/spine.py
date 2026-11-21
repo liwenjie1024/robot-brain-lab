@@ -190,15 +190,20 @@ def _joint_limits(
     peaks: list[float],
     drives: Sequence[DriveSpec | None] | None,
 ) -> nova_rt.JointLimits:
-    """关节的范围、峰值力矩（带着它的驱动器都往这一边出全力；模型在关节上写了上限就取小的），
-    有驱动器的模型时再加转速（最慢的那个驱动器的空载转速）和功率（带着它的驱动器的峰值功率加起来）。"""
-    lower, upper = model.jnt_range[joint] if model.jnt_limited[joint] else (-math.inf, math.inf)
+    """关节的目标能给到多少、峰值力矩（带着它的驱动器都往这一边出全力；模型在关节上写了上限就取小的），
+    有驱动器的模型时再加转速（最慢的那个驱动器的空载转速）和功率（带着它的驱动器的峰值功率加起来）。
+
+    目标按关节的范围截，只在带着它的驱动器都限了目标（ctrllimited）时（Nova 的都限了）。模型里驱动器不限目标的身体
+    （mjlab 的 G1、SONIC 的 G1）练的时候目标就能给到范围外面：关节到头由关节自己的限位挡，顶得越多，往外推的力越大，
+    策略蹬地就靠它。脊髓层替它截了，就和练的时候不一样了（2.2 步：楼梯的 G1 走不动、上不了台阶）。"""
     carriers = [
         (actuator, abs(coefficient))
         for actuator, actuator_transmissions in enumerate(transmissions)
         for joint_index, coefficient in actuator_transmissions
         if joint_index == index
     ]
+    targets_limited = model.jnt_limited[joint] and all(model.actuator_ctrllimited[actuator] for actuator, _ in carriers)
+    lower, upper = model.jnt_range[joint] if targets_limited else (-math.inf, math.inf)
     peak = sum(peaks[actuator] * coefficient for actuator, coefficient in carriers)
     if model.jnt_actfrclimited[joint]:
         peak = min(peak, float(min(-model.jnt_actfrcrange[joint, 0], model.jnt_actfrcrange[joint, 1])))

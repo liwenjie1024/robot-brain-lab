@@ -414,3 +414,11 @@ class SonicBrain:
 
     def runner(self, model: mujoco.MjModel, spine: nova_rt.Spine) -> SonicController:
         return SonicController(model, spine, sonic_files(self.third_party_dir))
+
+    def refusal(self, command: Mapping[str, float]) -> str | None:
+        """比跑得最快的（3 m/s）还快的命令接不了（不剪）。太慢的照手柄的程序提到慢走的最慢，那是 SONIC 自己的走法。"""
+        speed = math.hypot(command["lin_vel_x"], command["lin_vel_y"])
+        fastest = SPEED_RANGES[Mode.RUN][1]
+        if speed > fastest:
+            return f"SONIC 最快跑 {fastest:g} m/s，命令要 {speed:g} m/s"
+        return None

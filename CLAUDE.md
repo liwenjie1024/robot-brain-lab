@@ -64,7 +64,7 @@ rt/             实时分区（C++20，Eigen）：现在是脊髓层（第一版
                  reflexes（反射：保护、碰撞、跌倒、停止） lie（转动的小工具）。python/（nanobind 的模块 nova_rt，
                  装进身体的镜像） tests/（GoogleTest）。在身体的镜像的第一段（rt-build）里编译
 train/          训练：在显卡上做强化学习（容器 nova-train）。mjlab、MuJoCo Warp、PyTorch，版本锁在 uv.lock
-                 nova_train: gpu（显卡能不能用） train（mjlab 的训练，关掉预料之中的提醒） contract（写策略的规约）
+                 nova_train: gpu（显卡能不能用） train（mjlab 的训练，关掉预料之中的提醒） play（mjlab 的网页播放器） contract（写策略的规约）
                  export_policy（导出给测试台） nova_warp（Nova 在显卡上的仿真） fixtures（测试用的小策略）
                  tasks（我们自己的训练任务，名字以 Nova- 开头：G1 练楼梯）
 results/        训练的记录、练出来的策略、考的结果（不提交）
@@ -73,7 +73,7 @@ view/            网页：Vue 3 + TypeScript + Naive UI + three.js，直接在�
                  stage/（3D：figure 搭身体和摆姿势，stage 碰显卡） components/（画面的各块） text/（数和状态的写法）
                  generated/（照规约生成的类型，不手改） test/（测试用的样本，从真的仿真里抓的）
 third_party/     外面来的东西：清单（提交）和按清单下载的文件（不提交）。现在只有基线的模型 unitree_g1
-scripts/         本地检查（check.ps1）、打开网页（view.ps1）
+scripts/         本地检查（check.ps1）、打开网页（view.ps1）、在浏览器里看练出来的策略（watch.ps1）
 ```
 
 ## 常用命令
@@ -99,6 +99,7 @@ docker compose run --rm train pytest                           # 训练这边的
 docker compose run --rm train python -m nova_train.train <任务> ... # 训练，参数和 mjlab 的 train 一样（见 train/README.md）
 docker compose run -d --name nova-train-<名字> train python -m nova_train.train <任务> ...  # 要练几个小时的：容器自己跑
 docker logs -f nova-train-<名字>                               # 看它练到哪了（练完 docker rm nova-train-<名字>）
+.\scripts\watch.ps1                                            # 在浏览器里看练出来的策略（mjlab 的播放器，http://127.0.0.1:8080；看完 docker stop nova-watch）
 docker compose run --rm train python -m nova_train.export_policy <任务> <那次训练的目录> --name <名字> --body <身体>  # 交给测试台
 docker compose run --rm body python -m nova_body.policy_walk /results/policies/<名字>/contract.json  # 在测试台上考走路
 docker compose run --rm body python -m nova_body.p2_exam /results/policies/<名字>/contract.json  # P2 的考试（几个进程一起考，约 15 分钟）
@@ -124,7 +125,7 @@ docker compose run --rm train-lock                             # 改了 train/py
 - **实时分区和脊髓层**（`rt/`、`nova_body/spine.py`，2.1 步，为什么这样做）：
   - C++20，警告都当错误。`Spine::step` 里不分配内存（缓冲在建的时候分好）；输入不对（长度、不是数、负的软硬）抛 `std::invalid_argument`，到 Python 里是 ValueError。C++ 的测试（GoogleTest）每个 TEST 上面写一行中文的 `// 说明：`。
   - `nova_rt` 是装进身体的镜像里的（不是挂源码）：改了 `rt/` 要 `docker compose build body`，C++ 的测试是 `docker compose run --rm rt`。
-  - 脊髓层照 MuJoCo 的模型建（`spine_for`）：驱动器要是位置控制的，带着一个关节或者一根固定肌腱；力的上限用模型里写的（驱动器那一层每一步改它以前的），模型在关节上写了力矩上限就取小的。脊髓层的关节顺序是"驱动器带着的关节，按模型里的顺序"，和 `Body.joints` 一样。
+  - 脊髓层照 MuJoCo 的模型建（`spine_for`）：驱动器要是位置控制的，带着一个关节或者一根固定肌腱；力的上限用模型里写的（驱动器那一层每一步改它以前的），模型在关节上写了力矩上限就取小的。目标的角度按关节的范围截，只在带着它的驱动器都限了目标（`ctrllimited`）时：Nova 的都限了；mjlab 的 G1、SONIC 的 G1 的驱动器不限目标，练的时候目标就给到范围外面（脚踝最多超出 30°，关节到头由关节自己的限位挡，越往外给推得越用力），脊髓层截了就和练的时候不一样（2.2 步查楼梯时发现）。脊髓层的关节顺序是"驱动器带着的关节，按模型里的顺序"，和 `Body.joints` 一样。
   - 并联的一对两个关节软硬不一样时，驱动器那边的软硬有交叉的项：驱动器只管对角的，交叉的由脊髓层每 1 毫秒按读数算成前馈力。限过的部分从前馈力里扣，目标、软硬照小脑层给的。
   - 策略（`PolicyRunner`）只给关节的命令（`JointCommand`），经过脊髓层（`step_spine`）和驱动器那一层（`DriveLayer.command_impedance`：目标、刚度、阻尼、前馈力一起晚 1 毫秒到；前馈力放在 MuJoCo 的 position 驱动器的偏置里）。策略不管的关节要测试台给命令（`base`）。
   - 状态估计（`estimation.py`）：IMU 的读数来自 `SensorModel`（它要的是 `SensorList`：`Body` 或 `SensorSet`），腿的运动学用一份自己的仿真状态（骨盆放在原点），关节的角度从驱动器的读数换算（像编码器）。着地的点"会滑多少"的噪声不能给大（给 0.1 m/s/√Hz 时站着也差 0.1 m/s），现在是 0.002。练的时候的身体（规约里的 `body.name`）用哪个 IMU、哪两只脚、推哪里写在 `policy_bodies.POLICY_BODIES`；测试台的身体用 `setup_for_body`。G1 脚上没有力传感器，着地用仿真里脚和地面的接触力：地面是固定在世界上的形状（平地、楼梯的每一级），不只是叫 floor 的那一块。`policy_walk` 走两遍：策略看仿真里的真数、看身体自己感觉到的（`BodySense`）。
@@ -139,17 +140,19 @@ docker compose run --rm train-lock                             # 改了 train/py
   - 都在 `PolicyBench` 上考（小脑层 → 脊髓层 → 驱动器那一层 → 仿真），策略看身体自己感觉到的；裁判看仿真里的真数。几道题互不相干，每一份一个进程（用 spawn：父进程里已经有 ONNX 的线程）。
   - 摔倒 = 骨盆歪过 60° 或者离脚下的地面低到站着时的一半（楼梯上从骨盆下面那一级算）；站着 = 至少站着时的八成高、歪不过 20°。
   - 被推照 P1（胸上 0.5 秒，力按体重的比例），从 4% 起每档加 4%，到 60%，推到倒了为止；四个方向。每档推 4 次，推的时刻在策略的一个周期里错开（推到时策略算到哪一步不一样，同一档 G1 最多差 9°、倒不倒都会变），4 次都没倒才算扛得住。走 1 公里是一圈 8 段的命令（往前 0.5~1.1 m/s、转弯、横着、后退）一圈一圈地走。
-  - 楼梯是套内楼梯里最难的（一级 0.20 m、踏面 0.22 m，上 15 级、平台、下 15 级），三种：平常的、中间往右推一下（体重的 10%，0.3 秒）、第 8 级是滑的（摩擦 0.3）。上了几级、下了几级按"站得好好的"走到的最远的地方算（掉下去、扑上去不算）。
+  - 楼梯是套内楼梯里最难的（一级 0.20 m、踏面 0.22 m，上 15 级、平台、下 15 级），三种：平常的、中间往右推一下（体重的 10%，0.3 秒）、第 8 级是滑的（摩擦 0.3）。上了几级、下了几级按"站得好好的"走到的最远的地方算（掉下去、扑上去不算），并且骨盆要在楼梯的宽度以内：走到楼梯旁边，脚下就是地面（`Stairs.ground_height`）。原来只看 x，楼梯的 G1 走偏到楼梯旁边的地上，被判成"骨盆太低、摔了"。楼梯上像 mjlab 训练时那样把住方向：转的命令 = 0.5 × 朝向差（最多 ±0.5 rad/s），朝向用仿真里的真数（像旁边有人拿遥控器帮它对准）；不把住的话 15 秒就偏出去 2 m。
   - 起来：从趴着、仰着、侧躺着（都是头朝 +x）开始，跌倒的反射关掉，10 秒内站起来、再站住 2 秒才算。
   - 摔的时候护没护住自己：被推倒时记身上（脚以外，脚是 `policy_bodies` 里的 foot_bodies 和它们下面的段）和地面之间最大的一个法向接触力，按体重的几倍。接触很硬，每 1 毫秒取一次，数会到几十倍，只能比。只补考几道题（`--items`）时，结果并进原来的 exam.json。
+  - 考不了的题不考：开考前先问大脑（`refusal`）接不接得了那道题的每个命令，接不了的（比如超出练过的范围）写进 exam.json 的 `refused`（为什么）。不剪命令，也不考到一半：考到一半被拒绝，那道题的结果就不对了。
 - **训练**（`train/`，为什么这样做）：
   - 训练的容器用显卡（compose 里的 `deploy.resources`），镜像 10.6 GB，要的时候才开。Warp 第一次用时要编译显卡的程序，编译好的留在 `train-cache` 卷里。
   - 版本锁在 `train/uv.lock`（uv；`exclude-newer` 只要两周以前发布的）。改了 `train/pyproject.toml` 先 `docker compose run --rm train-lock`，再 `docker compose build train`；镜像用 `uv sync --locked`，锁和 pyproject 对不上就不装。
   - mjlab 用 2026-11-01 那一版（1.6.0）。它写的是 MuJoCo 3.16，我们用 override 装 3.17（和身体一样）。绕开的四处，都不改 mjlab：`MUJOCO_GL=disable`（容器里没有 EGL）；`GIT_PYTHON_REFRESH=quiet`（没有 git）；训练用 `nova_train.train`，它关掉"解的次数用完了"的提醒（迭代、线搜索；接触、约束放不下的提醒留着）；导出身体时按训练的设置另建一份 Entity（已经接进场景的那一份，3.17 里再复制会崩）。
   - 在 Git Bash 里给容器传 `/results/...` 这样的路径要加 `MSYS_NO_PATHCONV=1`，不然会变成 Windows 的路径（训练的记录写进过 `train/E:/...`）。PowerShell 里不用。
   - **只认测试台的分数**：练完用 `export_policy` 导出（ONNX、练的时候的身体模型、规约），在测试台上考（`policy_walk`、`p2_exam`）。导出时比一比 ONNX 和 PyTorch 的动作，对不上就不交。
-  - 策略的规约只写在 `contracts/policy`：训练那边写，测试台读，两边都照 JSON Schema 检查。规约表达不了的（观测的历史、剪裁、延迟、每一维的缩放）导出时就拒绝；测试台的 `PolicyRunner` 对不上（关节、驱动器、IMU 的点、步长凑不成策略的周期）就拒绝；命令超出练过的范围拒绝，不剪。规约里哪个数的意思变了，`contract_version` 加一。
-  - 要练几个小时的训练用 `docker compose run -d --name …` 让容器自己跑：跟着会话的后台命令，会话结束时会被一起停掉（2026-11-20 练楼梯练到第 111 轮就停了）。练到一半停了可以接着练（`--agent.resume True --agent.load-run …`），但命令、地形"由易到难"的计数会从头算，练得不多时不如重新练。
+  - 策略的规约只写在 `contracts/policy`：训练那边写，测试台读，两边都照 JSON Schema 检查。规约表达不了的（观测的历史、剪裁、延迟、每一维不一样的缩放）导出时就拒绝（mjlab 建好环境后缩放都是 32 位的张量，一个数的按最短的小数写，0.2）；测试台的 `PolicyRunner` 对不上（关节、驱动器、IMU 的点、步长凑不成策略的周期）就拒绝；命令超出练过的范围拒绝，不剪。规约里哪个数的意思变了，`contract_version` 加一。
+  - 要练几个小时的训练用 `docker compose run -d --name …` 让容器自己跑：跟着会话的后台命令，会话结束时会被一起停掉（2026-11-20 练楼梯练到第 111 轮就停了）。练到一半停了可以接着练（`--agent.resume True --agent.load-run … --agent.load-checkpoint …`）：mjlab 的存档里存着命令的"由易到难"的计数（`common_step_counter`），接着算；地形的难度从头分，会走的几回合就爬回去。2026-11-21 凌晨 Docker 的文件共享出了错（写 `/results` 时 Input/output error），楼梯练到第 4600 轮就停了。
+  - 看练出来的策略用 `scripts/watch.ps1`（`nova_train.play`，mjlab 的网页播放器 viser，http://127.0.0.1:8080）。它也用显卡，练的时候不要开（显卡的内存不够两个一起用）。默认的镜头在地形外面：先勾 Track camera，再拉近（滚轮往上），才看得到机器人。
   - 楼梯的任务（`nova_train/tasks.py`）照 mjlab 的 G1 不平地的任务，只换地形（楼梯到 20 cm、踏面 22 cm 和 30 cm、高低不平的方块地面）和凸形状的迭代（50 次）：mjlab 的 500 次时，这块 8 GB 的显卡放不下碰撞的缓冲（4096 个仿真光一块就要 2.9 GB）。地形都用方块，因为 G1 碰撞的形状只有球和胶囊，它们和方块之间有现成的算法，用不到那些迭代（高度场才用得到）。4096 个仿真时显卡要用到约 6.2 GB，一轮约 3.6 秒。
   - 高度扫描（`height_scan.py`、规约的 `height_scan`）照 mjlab 的打法：从骨盆那一点出发、网格只跟着转偏航、射线竖直朝下、先 y 后 x 地排、只打给定的几组形状（地面在第 0 组，mjlab 的 G1 的形状在第 2、3 组）、骨盆自己不打、打不到就当最远的距离。测试台现在用仿真里的真数（以后换成深度相机算的，2.5 步）。规约表达不了的打法（跟着全身转、减常数、打不到另算）导出时就拒绝。
   - 身体那边测试用的小策略（`body/tests/fixtures/policy`，看脚下高度的 `policy_scan`）是 `nova_train.fixtures` 做的（身体的容器里没有做 ONNX 的库），训练这边的测试核对提交的和做出来的一个字节都不差；改了要重新做、一起提交。

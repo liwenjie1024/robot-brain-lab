@@ -23,7 +23,7 @@ import numpy as np
 
 from nova_body.bench import Stairs
 from nova_body.policy import Policy, load_policy
-from nova_body.policy_bench import STILL, BenchBrain, PolicyBench, StartPose
+from nova_body.policy_bench import STILL, BenchBrain, PolicyBench, StartPose, as_brain
 from nova_body.policy_walk import Segment, SegmentResult, numbers, walk_on
 from nova_body.sonic_brain import SonicBrain
 
@@ -73,6 +73,10 @@ WALK_LAP = (
 # 上下楼梯：套内楼梯里最难的（一级 0.20 m、踏面 0.22 m），上 15 级、1 m 的平台、下 15 级。慢慢往前走。
 STAIRS = Stairs(start_x=1.0, rise_m=0.20, tread_m=0.22, steps=15, landing_m=1.0, width_m=1.2)
 STAIRS_COMMAND = {**STILL, "lin_vel_x": 0.3}
+# 在楼梯上把住方向：像 mjlab 训练时那样按朝向的差给转的命令（转的速度 = 0.5 × 朝向差，最多 ±0.5 rad/s）。
+# 朝向用仿真里的真数：像旁边有人拿着遥控器帮它对准。不把住的话会慢慢走偏，走出 1.2 m 宽的楼梯。
+STAIRS_HEADING_STIFFNESS = 0.5
+STAIRS_MAX_TURN_RAD_S = 0.5
 STAIRS_TIME_S = 90.0
 # 下完了再往前这么远（站得好好的），算走完了。
 STAIRS_FINISH_M = 0.5
@@ -216,6 +220,8 @@ class ExamResult:
     walk: WalkResult | None = None
     stairs: list[StairsResult] = field(default_factory=list)
     get_up: list[GetUpResult] = field(default_factory=list)
+    # 考不了的题（大脑接不了那道题的命令，比如超出练过的范围）：题 → 为什么。
+    refused: Mapping[str, str] = field(default_factory=dict)
 
 
 def exam_stand(policy: Brain, *, seconds: float = STAND_S, sensed: bool = True) -> StandResult:
@@ -374,10 +380,18 @@ def mean_errors(results: Sequence[SegmentResult]) -> dict[str, float]:
     return {name: sum(r.error[name] * r.seconds for r in measured) / total for name in VELOCITY_FIELDS}
 
 
+def stairs_command(heading_rad: float) -> dict[str, float]:
+    """楼梯上的命令：慢慢往前走，按朝向的差（要朝 +x）转回来。"""
+    error = math.remainder(-heading_rad, math.tau)
+    turn = min(max(STAIRS_HEADING_STIFFNESS * error, -STAIRS_MAX_TURN_RAD_S), STAIRS_MAX_TURN_RAD_S)
+    return {**STAIRS_COMMAND, "ang_vel_z": turn}
+
+
 def exam_stairs(
     policy: Brain, trial: StairsTrial, *, time_s: float = STAIRS_TIME_S, sensed: bool = True
 ) -> StairsResult:
-    """从楼梯前面 1 m 开始，慢慢往前走，上去、下来。"""
+    """从楼梯前面 1 m 开始，慢慢往前走（把住方向），上去、下来。
+    走到了哪里，只算骨盆在楼梯的宽度以内、站得好好的时候。"""
     stairs = trial.stairs
     bench = PolicyBench(policy, sensed=sensed, stairs=stairs)
     bump_force = tuple(STAIRS_BUMP_SHARE * bench.weight_n * np.array(STAIRS_BUMP_DIRECTION))
@@ -389,12 +403,13 @@ def exam_stairs(
         if trial.bump and bump_until is None and x >= bump_x:
             bump_until = bench.time_s + STAIRS_BUMP_S
         bumping = bump_until is not None and bench.time_s < bump_until - TIME_EPSILON_S
-        bench.step(STAIRS_COMMAND, bump_force if bumping else NO_PUSH)
+        bench.step(stairs_command(bench.heading_rad()), bump_force if bumping else NO_PUSH)
         if bench.fallen():
             fell = True
             break
-        if bench.upright():
-            furthest_x = max(furthest_x, float(bench.pelvis_xy()[0]))
+        x, y = (float(value) for value in bench.pelvis_xy())
+        if bench.upright() and stairs.covers(y):
+            furthest_x = max(furthest_x, x)
         if furthest_x >= stairs.end_x + STAIRS_FINISH_M:
             finished = True
             break
@@ -453,6 +468,32 @@ def exam_get_up(
 
 # 一道题（或者一道题的一部分）在一个进程里考：(题, 哪一个)。
 EXAM_ITEMS = ("stand", "push", "walk", "stairs", "get_up")
+ITEM_TITLES = {
+    "stand": f"站 {STAND_S / 3600:g} 小时",
+    "push": "被推（扛得住体重的几成）",
+    "walk": f"走 {WALK_DISTANCE_M / 1000:g} 公里",
+    "stairs": f"上下楼梯（{STAIRS.steps} 级）",
+    "get_up": f"摔倒了起来（{GET_UP_S:g} 秒内）",
+}
+
+
+def item_commands(item: str) -> tuple[Mapping[str, float], ...]:
+    """一道题会给大脑的命令。"""
+    if item == "walk":
+        return tuple(segment.command for segment in WALK_LAP)
+    if item == "stairs":
+        return tuple(stairs_command(heading) for heading in (0.0, -math.pi / 2, math.pi / 2))
+    return (STILL,)
+
+
+def refusals(brain: Brain, items: Sequence[str] = EXAM_ITEMS) -> dict[str, str]:
+    """这个大脑考不了的题（接不了那道题的某个命令）和为什么。考不了的不考：考到一半被拒绝，那道题的结果就不对了。"""
+    taker, found = as_brain(brain), {}
+    for item in items:
+        reasons = (taker.refusal(command) for command in item_commands(item))
+        if (reason := next((reason for reason in reasons if reason is not None), None)) is not None:
+            found[item] = reason
+    return found
 
 
 def exam_tasks(items: Sequence[str] = EXAM_ITEMS) -> list[tuple[str, str]]:
@@ -494,9 +535,10 @@ def run_task(reference: str, item: str, part: str):
 
 
 def run_exam(reference: str, items: Sequence[str] = EXAM_ITEMS, workers: int | None = None) -> ExamResult:
-    """考一个策略：每一份一个进程，一起考，按题的顺序收起来。"""
+    """考一个策略：每一份一个进程，一起考，按题的顺序收起来。考不了的题不考，写明为什么。"""
     policy = load_brain(reference)
-    tasks = exam_tasks(items)
+    refused = refusals(policy, items)
+    tasks = exam_tasks([item for item in items if item not in refused])
     limit = SONIC_WORKERS if reference == SONIC else (os.cpu_count() or 1) - SPARE_CPUS
     workers = workers or max(1, min(len(tasks), limit))
     # 用 spawn 开进程：父进程里已经有 ONNX 的线程，fork 出来的子进程可能卡住。
@@ -515,30 +557,30 @@ def run_exam(reference: str, items: Sequence[str] = EXAM_ITEMS, workers: int | N
         walk=found["walk"][0] if found["walk"] else None,
         stairs=found["stairs"],
         get_up=found["get_up"],
+        refused=refused,
     )
 
 
 def describe(exam: ExamResult) -> str:
-    """考试的结果：一张总表，再加被推、走、楼梯的细表。没考的题不写。"""
+    """考试的结果：一张总表，再加被推、走、楼梯的细表。没考的题不写，考不了的写为什么。"""
     lines = [f"策略 {exam.policy}（{exam.date}）", "", "| 题 | 结果 |", "|---|---|"]
     if exam.stand:
-        lines.append(f"| 站 {STAND_S / 3600:g} 小时 | {describe_stand(exam.stand)} |")
+        lines.append(f"| {ITEM_TITLES['stand']} | {describe_stand(exam.stand)} |")
     if exam.pushes:
         held = "、".join(
             f"{push.direction} {push.strongest_share:.0%}（{push.strongest_n:.0f} N）" for push in exam.pushes
         )
-        lines.append(f"| 被推（扛得住体重的几成） | {held} |")
+        lines.append(f"| {ITEM_TITLES['push']} | {held} |")
         lines.append(f"| 被推倒时身上（脚以外）着地最重的一下（体重的几倍） | {describe_impacts(exam.pushes)} |")
     if exam.walk:
-        lines.append(f"| 走 {WALK_DISTANCE_M / 1000:g} 公里 | {describe_walk(exam.walk)} |")
+        lines.append(f"| {ITEM_TITLES['walk']} | {describe_walk(exam.walk)} |")
     if exam.stairs:
-        lines.append(
-            f"| 上下楼梯（{STAIRS.steps} 级） | {'；'.join(describe_stairs(result) for result in exam.stairs)} |"
-        )
+        lines.append(f"| {ITEM_TITLES['stairs']} | {'；'.join(describe_stairs(result) for result in exam.stairs)} |")
     if exam.get_up:
-        lines.append(
-            f"| 摔倒了起来（{GET_UP_S:g} 秒内） | {'；'.join(describe_get_up(result) for result in exam.get_up)} |"
-        )
+        lines.append(f"| {ITEM_TITLES['get_up']} | {'；'.join(describe_get_up(result) for result in exam.get_up)} |")
+    for item in EXAM_ITEMS:
+        if item in exam.refused:
+            lines.append(f"| {ITEM_TITLES[item]} | 考不了：{exam.refused[item]} |")
     if exam.pushes:
         lines += ["", *push_table(exam.pushes)]
     if exam.walk:
@@ -624,13 +666,15 @@ RESULT_KEYS = {"stand": "stand", "push": "pushes", "walk": "walk", "stairs": "st
 
 
 def merged(previous: Mapping, exam: ExamResult, items: Sequence[str]) -> dict:
-    """只考了几道题时，并进原来的结果：这几道换成新的，别的照旧（策略换了就不并）。"""
+    """只考了几道题时，并进原来的结果：这几道换成新的（考不了的也是），别的照旧（策略换了就不并）。"""
     fresh = asdict(exam)
     if previous.get("policy") != exam.policy:
         return fresh
     combined = dict(previous)
     for item in items:
         combined[RESULT_KEYS[item]] = fresh[RESULT_KEYS[item]]
+    kept = {item: reason for item, reason in previous.get("refused", {}).items() if item not in items}
+    combined["refused"] = {**kept, **fresh["refused"]}
     combined["date"] = fresh["date"]
     return combined
 

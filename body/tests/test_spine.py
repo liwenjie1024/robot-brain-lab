@@ -214,3 +214,32 @@ def test_unlimited_joints_and_forces_are_infinite_limits():
     result = step_spine(spine, data, command)
     assert result.limited[0] == 0
     assert result.joint_torque[0] == pytest.approx(1e3 * math.pi * 10)
+
+
+@pytest.mark.parametrize(
+    ("ctrllimited", "limited"), [(True, True), (False, False)], ids=["驱动器限了目标", "驱动器不限目标"]
+)
+def test_targets_are_kept_in_range_only_if_the_actuator_limits_them(ctrllimited, limited):
+    """关节有范围（±1 弧度）：驱动器限了目标（Nova 的都限了），给到范围外面的目标截回范围里，并且说是角度改的；
+    驱动器不限目标（mjlab 的 G1、SONIC 的 G1，练的时候就能给到外面），照给的目标出力，不改。"""
+    spec = mujoco.MjSpec()
+    body = spec.worldbody.add_body(name="link")
+    body.add_joint(
+        name="joint", type=mujoco.mjtJoint.mjJNT_HINGE, limited=mujoco.mjtLimited.mjLIMITED_TRUE, range=[-1.0, 1.0]
+    )
+    body.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.1, 0, 0], mass=1.0)
+    actuator = spec.add_actuator(name="servo", trntype=mujoco.mjtTrn.mjTRN_JOINT, target="joint")
+    actuator.set_to_position(kp=10.0)
+    actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE if ctrllimited else mujoco.mjtLimited.mjLIMITED_FALSE
+    actuator.ctrlrange = [-1.0, 1.0]
+    model = spec.compile()
+    result = step_spine(
+        spine_for(model),
+        mujoco.MjData(model),
+        JointCommand(np.array([1.5]), np.zeros(1), np.array([10.0]), np.zeros(1), np.zeros(1)),
+    )
+    assert bool(result.limited[0] & nova_rt.LIMIT_ANGLE) == limited
+    if limited:
+        assert result.joint_torque[0] < 10.0 * 1.0
+    else:
+        assert result.joint_torque[0] == pytest.approx(10.0 * 1.5)

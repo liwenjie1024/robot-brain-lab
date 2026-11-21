@@ -1,7 +1,7 @@
 """测试台上跑一个策略（2.2 步起，考试都用它）：小脑层（策略）→ 脊髓层（反射、硬限制、换算）→ 驱动器那一层 → 仿真，
 状态估计跟着跑。
 
-"大脑"有两种，样子一样（BenchBrain：怎么建身体、默认的姿势、每一步的控制器）：练出来的、有规约的策略（ContractBrain），
+"大脑"有两种，样子一样（BenchBrain：怎么建身体、默认的姿势、每一步的控制器、接不接得了一个命令）：练出来的、有规约的策略（ContractBrain），
 和现成的 SONIC（sonic_brain.SonicBrain）。身体用练的时候的那个模型（规约里写的、核对过 SHA-256），
 换成测试台的步长、积分的方法和地面，可以再加一段楼梯。
 可以从站着、趴着、仰着、侧躺着开始。量的都是仿真里的真数（考试的裁判不信身体自己报的）。
@@ -21,7 +21,7 @@ from nova_body import actuation
 from nova_body.actuation import DriveLayer
 from nova_body.bench import FLOOR, Stairs, add_floor, add_stairs, use_bench_settings
 from nova_body.estimation import BodyFeel
-from nova_body.policy import Policy
+from nova_body.policy import Policy, PolicyError
 from nova_body.policy_bodies import info_for
 from nova_body.policy_runner import BodySense, PolicyRunner, root_body
 from nova_body.spinal import SpinalLayer, reflexes_for, tilt_rad
@@ -73,7 +73,8 @@ class Runner(Protocol):
 
 
 class BenchBrain(Protocol):
-    """测试台上的一个"大脑"：名字、身体的名字（policy_bodies 里认得的）、每秒算几次、怎么建身体、默认的姿势、控制器。"""
+    """测试台上的一个"大脑"：名字、身体的名字（policy_bodies 里认得的）、每秒算几次、怎么建身体、默认的姿势、控制器，
+    还有接不接得了一个命令（refusal：接不了说为什么，接得了是 None；考试开考前先问）。"""
 
     name: str
     body_name: str
@@ -84,6 +85,8 @@ class BenchBrain(Protocol):
     def default_positions(self) -> dict[str, float]: ...
 
     def runner(self, model: mujoco.MjModel, spine: nova_rt.Spine) -> Runner: ...
+
+    def refusal(self, command: Mapping[str, float]) -> str | None: ...
 
 
 class ContractBrain:
@@ -101,6 +104,14 @@ class ContractBrain:
 
     def runner(self, model: mujoco.MjModel, spine: nova_rt.Spine) -> PolicyRunner:
         return PolicyRunner(model, self.policy, spine)
+
+    def refusal(self, command: Mapping[str, float]) -> str | None:
+        """超出练过的范围（或者不认得、少了的）命令接不了，说为什么。"""
+        try:
+            self.policy.command.vector(command)
+        except PolicyError as error:
+            return str(error)
+        return None
 
 
 def as_brain(brain: "Policy | BenchBrain") -> BenchBrain:
@@ -291,10 +302,10 @@ class PolicyBench:
         return math.degrees(math.acos(max(-1.0, min(1.0, float(up[2])))))
 
     def pelvis_height_m(self) -> float:
-        """骨盆离脚下的地面多高（有楼梯时减去那一级的高度）。"""
-        x = float(self.data.xpos[self.root][0])
-        ground = self.stairs.height_at(x) if self.stairs else 0.0
-        return float(self.data.xpos[self.root][2]) - ground
+        """骨盆离脚下的地面多高（骨盆在楼梯上时减去那一级的高度；走到楼梯旁边，脚下就是地面）。"""
+        x, y, z = (float(value) for value in self.data.xpos[self.root])
+        ground = self.stairs.ground_height(x, y) if self.stairs else 0.0
+        return z - ground
 
     def fallen(self) -> bool:
         too_low = self.pelvis_height_m() < FALLEN_HEIGHT_SHARE * self.standing_height_m
@@ -304,13 +315,18 @@ class PolicyBench:
         tall = self.pelvis_height_m() >= UPRIGHT_HEIGHT_SHARE * self.standing_height_m
         return tall and self.tilt_deg() < UPRIGHT_TILT_DEG
 
+    def heading_rad(self) -> float:
+        """骨盆朝哪个方向（偏航，+x 是 0，往左转是正的），仿真里的真数。"""
+        rotation = self.data.xmat[self.root].reshape(3, 3)
+        return math.atan2(rotation[1, 0], rotation[0, 0])
+
     def heading_velocity(self) -> np.ndarray:
         """骨盆的速度，按它朝的方向（只转了偏航）：往前、往左、往左转。"""
         address = self.model.jnt_dofadr[free_joint(self.model)]
         linear_world = self.data.qvel[address : address + 3]
         angular_local = self.data.qvel[address + 3 : address + 6]
         rotation = self.data.xmat[self.root].reshape(3, 3)
-        yaw = math.atan2(rotation[1, 0], rotation[0, 0])
+        yaw = self.heading_rad()
         cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
         forward = cos_yaw * linear_world[0] + sin_yaw * linear_world[1]
         left = -sin_yaw * linear_world[0] + cos_yaw * linear_world[1]

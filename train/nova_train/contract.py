@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import mujoco
+import numpy as np
+import torch
 from mjlab.entity import Entity
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.envs.mdp.actions import JointPositionAction
@@ -199,11 +201,14 @@ def _contract_term(term_name: str, cfg: Any) -> str:
 
 
 def _scalar_scale(term_name: str, scale: Any) -> float:
+    # mjlab 建好环境时把缩放换成了 32 位的张量（一个数的也是），所以看的是里面的数是不是都一样；
+    # 写成和那个 32 位的数一样的最短的小数（0.2，不是 0.20000000298）。
     if scale is None:
         return 1.0
-    if isinstance(scale, int | float):
-        return float(scale)
-    raise ExportError(f"观测 {term_name} 每一维的缩放不一样，这一版的规约还不支持")
+    values = {float(str(np.float32(value))) for value in torch.as_tensor(scale).flatten().tolist()}
+    if len(values) != 1:
+        raise ExportError(f"观测 {term_name} 每一维的缩放不一样，这一版的规约还不支持")
+    return values.pop()
 
 
 def _imu_site(model: mujoco.MjModel, sensor_name: str, sensor_type: int) -> str:
